@@ -20,6 +20,23 @@ android {
     namespace = "com.wireguard.android.tunnel"
     defaultConfig {
         minSdk = 24
+
+        ndk {
+            // Оставляем только мобильные архитектуры, чтобы не ловить ошибки на x86
+            abiFilters.clear()
+            abiFilters.addAll(listOf("arm64-v8a", "armeabi-v7a"))
+        }
+
+        externalNativeBuild {
+            cmake {
+                // Дублируем фильтры для CMake
+                abiFilters.clear()
+                abiFilters.addAll(listOf("arm64-v8a", "armeabi-v7a"))
+
+                // Оставляем только важные системные аргументы
+                arguments("-DANDROID_STL=c++_shared")
+            }
+        }
     }
     externalNativeBuild {
         cmake {
