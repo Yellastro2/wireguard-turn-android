@@ -10,7 +10,7 @@
 
         <import type="android.view.View" />
 
-        <import type="com.wireguard.android.model.ObservableTunnel" />
+        <import type="com.yellastrodev.rknvpn.model.ObservableTunnel" />
 
         <import type="com.wireguard.android.backend.Tunnel.State" />
 
@@ -28,10 +28,10 @@
 
         <variable
             name="item"
-            type="com.wireguard.android.model.ObservableTunnel" />
+            type="com.yellastrodev.rknvpn.model.ObservableTunnel" />
     </data>
 
-    <com.wireguard.android.widget.TvCardView
+    <com.yellastrodev.rknvpn.widget.TvCardView
         android:layout_width="225dp"
         android:layout_height="110dp"
         android:layout_margin="8dp"
@@ -80,6 +80,6 @@
 
         </androidx.constraintlayout.widget.ConstraintLayout>
 
-    </com.wireguard.android.widget.TvCardView>
+    </com.yellastrodev.rknvpn.widget.TvCardView>
 
 </layout>

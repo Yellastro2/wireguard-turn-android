@@ -8,7 +8,7 @@
 
     <data>
 
-        <import type="com.wireguard.android.util.ClipboardUtils" />
+        <import type="com.yellastrodev.rknvpn.util.ClipboardUtils" />
 
         <variable
             name="item"

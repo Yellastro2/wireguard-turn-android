@@ -18,7 +18,7 @@ android {
         dataBinding = true
         viewBinding = true
     }
-    namespace = "com.wireguard.android"
+    namespace = "com.yellastrodev.rknvpn"
     defaultConfig {
         applicationId = pkg
         minSdk = 24
