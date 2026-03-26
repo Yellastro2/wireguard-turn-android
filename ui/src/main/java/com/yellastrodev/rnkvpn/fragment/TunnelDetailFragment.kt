@@ -22,6 +22,7 @@ import com.yellastrodev.rknvpn.databinding.TunnelDetailFragmentBinding
 import com.yellastrodev.rknvpn.databinding.TunnelDetailPeerBinding
 import com.yellastrodev.rknvpn.model.ObservableTunnel
 import com.yellastrodev.rknvpn.util.QuantityFormatter
+import com.yellastrodev.rnkvpn.fragment.RNKFragmentTunnelEditor
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -47,7 +48,7 @@ class TunnelDetailFragment : BaseFragment(), MenuProvider {
                     R.id.list_detail_container
                 }
                 activity.supportFragmentManager.commit {
-                    replace(containerId, TunnelEditorFragment())
+                    replace(containerId, RNKFragmentTunnelEditor())
                     setTransition(androidx.fragment.app.FragmentTransaction.TRANSIT_FRAGMENT_FADE)
                     addToBackStack(null)
                 }

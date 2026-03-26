@@ -19,6 +19,7 @@ import com.yellastrodev.rknvpn.R
 import com.yellastrodev.rknvpn.fragment.TunnelDetailFragment
 import com.yellastrodev.rknvpn.fragment.TunnelEditorFragment
 import com.yellastrodev.rknvpn.model.ObservableTunnel
+import com.yellastrodev.rnkvpn.fragment.RNKFragmentTunnelEditor
 
 /**
  * CRUD interface for WireGuard tunnels. This activity serves as the main entry point to the
@@ -80,7 +81,7 @@ class MainActivity : BaseActivity(), FragmentManager.OnBackStackChangedListener 
 
             R.id.menu_action_edit -> {
                 supportFragmentManager.commit {
-                    replace(if (isTwoPaneLayout) R.id.detail_container else R.id.list_detail_container, TunnelEditorFragment())
+                    replace(if (isTwoPaneLayout) R.id.detail_container else R.id.list_detail_container, RNKFragmentTunnelEditor())
                     setTransition(FragmentTransaction.TRANSIT_FRAGMENT_FADE)
                     addToBackStack(null)
                 }

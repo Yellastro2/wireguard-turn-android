@@ -5,6 +5,7 @@
 package com.yellastrodev.rknvpn.activity
 
 import android.os.Bundle
+import android.util.Log
 import androidx.appcompat.app.AppCompatActivity
 import androidx.databinding.CallbackRegistry
 import androidx.databinding.CallbackRegistry.NotifierCallback
@@ -83,6 +84,7 @@ abstract class BaseActivity : AppCompatActivity() {
             ignored: Int,
             newTunnel: ObservableTunnel?
         ) {
+            Log.d("BaseActivity", "[onNotifyCalback] Tunnel changed from " + oldTunnel + " to " + newTunnel)
             listener.onSelectedTunnelChanged(oldTunnel, newTunnel)
         }
     }
