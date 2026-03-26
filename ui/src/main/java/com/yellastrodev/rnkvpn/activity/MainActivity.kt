@@ -15,11 +15,14 @@ import androidx.appcompat.app.ActionBar
 import androidx.fragment.app.FragmentManager
 import androidx.fragment.app.FragmentTransaction
 import androidx.fragment.app.commit
+import androidx.lifecycle.lifecycleScope
+import com.yellastrodev.rknvpn.Application
 import com.yellastrodev.rknvpn.R
 import com.yellastrodev.rknvpn.fragment.TunnelDetailFragment
 import com.yellastrodev.rknvpn.fragment.TunnelEditorFragment
 import com.yellastrodev.rknvpn.model.ObservableTunnel
 import com.yellastrodev.rnkvpn.fragment.RNKFragmentTunnelEditor
+import kotlinx.coroutines.launch
 
 /**
  * CRUD interface for WireGuard tunnels. This activity serves as the main entry point to the
@@ -64,6 +67,17 @@ class MainActivity : BaseActivity(), FragmentManager.OnBackStackChangedListener 
         supportFragmentManager.addOnBackStackChangedListener(this)
         backPressedCallback = onBackPressedDispatcher.addCallback(this) { handleBackPressed() }
         onBackStackChanged()
+
+        lifecycleScope.launch {
+            try {
+                val lastTunnel = Application.getTunnelManager().lastUsedTunnel
+                if (lastTunnel != null) {
+                    selectedTunnel = lastTunnel
+                }
+            } catch (e: Throwable) {
+
+            }
+        }
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {

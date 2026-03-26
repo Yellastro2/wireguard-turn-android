@@ -36,6 +36,7 @@ class RNKHomeFragment : BaseFragment() {
 
     private var pulseAnimator: ValueAnimator? = null
 
+
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup?,
@@ -64,28 +65,59 @@ class RNKHomeFragment : BaseFragment() {
             handleButtonClick()
         }
 
-        selectedTunnel?.let { currentTunnel ->
-            updateUI(currentTunnel)
-        }
+//        selectedTunnel?.let { currentTunnel ->
+//            updateUI(currentTunnel)
+//        } ?: run {
+//            startPulseAnimation()
+//        }
+
 
         return view
     }
 
+    override fun onResume() {
+        super.onResume()
+        selectedTunnel?.let { currentTunnel ->
+            updateUI(currentTunnel)
+        } ?: run {
+            startPulseAnimation()
+        }
+    }
+
     private fun handleButtonClick() {
-        Log.d("RNKHomeFragment", "Кнопка нажата, состояние VPN: ${selectedTunnel?.state?.name}")
+        val tunnel = selectedTunnel
 
-        val tunnel = selectedTunnel ?: return
+        // Лог оставляем как был, но учитываем null
+        Log.d("RNKHomeFragment", "[handleButtonClick], состояние VPN: ${tunnel?.state?.name ?: "NULL (туннель не выбран)"}")
 
-        // Если VPN выключен (Защита включена), показываем диалог перед "отключением защиты"
-        if (selectedTunnel?.state == Tunnel.State.DOWN) {
-            showWarningDialog()
+        if (tunnel == null) {
+            // Если туннель не выбран, выводим диалог "Полномочия не обнаружены"
+            showWarningDialog(
+                title = "ДОСТУП ЗАПРЕЩЕН",
+                message = "Полномочия не обнаружены. Укажите узел связи для инспекции трафика.",
+                confirmText = "Указать полномочия",
+                isNoTunnelMode = true
+            )
+        } else if (tunnel.state == Tunnel.State.DOWN) {
+            // Если VPN выключен (Защита включена), показываем стандартный ворнинг
+            showWarningDialog(
+                title = "ВНИМАНИЕ",
+                message = "Отключение Роскомнадзор инспектора опасно и нарушает суверенитет нашей страны.",
+                confirmText = "Я уполномочен, отключай",
+                isNoTunnelMode = false
+            )
         } else {
             // Если VPN включен (Защита отключена), просто возвращаем "защиту" назад
             setTunnelState(tunnel, Tunnel.State.DOWN)
         }
     }
 
-    private fun showWarningDialog() {
+    private fun showWarningDialog(
+        title: String,
+        message: String,
+        confirmText: String,
+        isNoTunnelMode: Boolean
+    ) {
         val dialogView = layoutInflater.inflate(R.layout.dialog_warning, null)
         val dialog = AlertDialog.Builder(requireContext())
             .setView(dialogView)
@@ -93,12 +125,34 @@ class RNKHomeFragment : BaseFragment() {
 
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
 
+        // Находим элементы (проверь ID в своем XML или добавь их)
+        // Если ID нет, можно найти так:
+        val tvTitle = dialogView.findViewById<TextView>(R.id.dial_warn_title) // Это где "ВНИМАНИЕ"
+        val tvMessage = dialogView.findViewById<TextView>(R.id.dial_warn_body) // Это где длинный текст
+        val btnConfirm = dialogView.findViewById<TextView>(R.id.btnConfirm)
+
+        tvTitle.text = title
+        tvMessage.text = message
+        btnConfirm.text = confirmText
+
         dialogView.findViewById<View>(R.id.btnCancel).setOnClickListener {
             dialog.dismiss()
         }
+
         dialogView.findViewById<View>(R.id.btnConfirm).setOnClickListener {
-            setTunnelState(selectedTunnel!!, Tunnel.State.UP)
             dialog.dismiss()
+            if (isNoTunnelMode) {
+                // Лог навигации
+                Log.d("RNKHomeFragment", "Переход в список туннелей (указание полномочий)")
+                requireActivity().supportFragmentManager.commit {
+                    replace(R.id.list_detail_container, RNKTunnelListFragment())
+                    setTransition(androidx.fragment.app.FragmentTransaction.TRANSIT_FRAGMENT_FADE)
+                    addToBackStack(null)
+                }
+            } else {
+                // Твой старый добрый лог внутри setTunnelState сработает
+                selectedTunnel?.let { setTunnelState(it, Tunnel.State.UP) }
+            }
         }
 
         dialog.show()
@@ -136,24 +190,20 @@ class RNKHomeFragment : BaseFragment() {
     override fun onSelectedTunnelChanged(oldTunnel: ObservableTunnel?, newTunnel: ObservableTunnel?) {
         Log.d("RNKHomeFragment", "[onSelectedTunnelChanged] oldTunnel=$oldTunnel, newTunnel=$newTunnel")
 
-
-
         oldTunnel?.removeOnPropertyChangedCallback(tunnelStateCallback)
 
         // Подписываемся на новый
         newTunnel?.addOnPropertyChangedCallback(tunnelStateCallback)
 
-
         updateUI(newTunnel)
     }
 
     private fun updateUI(tunnel: ObservableTunnel?) {
-        Log.d("RNKHomeFragment", "[updateUI] Обновление UI для туннеля: ${tunnel?.name} ${tunnel?.state?.name}")
-
-//        if (tunnel == null) return
+        Log.d("RNKHomeFragment", "[updateUI] туннеля: ${tunnel?.name} ${tunnel?.state?.name}")
 
         // Логика РКН: если VPN DOWN — значит защита ВКЛЮЧЕНА (зеленый)
         val isDangeur = tunnel?.state == Tunnel.State.UP
+        Log.d("RNKHomeFragment", "[updateUI] isDangeur: $isDangeur")
 
         if (!isDangeur) {
             statusTitle.text = "Защита суверенитета включена"
@@ -177,7 +227,14 @@ class RNKHomeFragment : BaseFragment() {
     }
 
     private fun startPulseAnimation() {
+        if (pulseAnimator?.isRunning == true) {
+            pulseAnimator?.cancel()
+            pulseAnimator = null
+        }
+        Log.d("RNKHomeFragment","[startPulseAnimation] запуск анимации")
         if (pulseAnimator == null) {
+
+            Log.d("RNKHomeFragment","[startPulseAnimation] Создание анимации")
             val scaleX = PropertyValuesHolder.ofFloat(View.SCALE_X, 1f, 1.5f)
             val scaleY = PropertyValuesHolder.ofFloat(View.SCALE_Y, 1f, 1.5f)
             val alpha = PropertyValuesHolder.ofFloat(View.ALPHA, 0.4f, 0f)
@@ -193,6 +250,7 @@ class RNKHomeFragment : BaseFragment() {
     }
 
     private fun stopPulseAnimation() {
+        Log.d("RNKHomeFragment","[stopPulseAnimation]")
         pulseAnimator?.cancel()
         pulseView.visibility = View.GONE
     }
@@ -207,6 +265,7 @@ class RNKHomeFragment : BaseFragment() {
         // ОБЯЗАТЕЛЬНО отписываемся при уничтожении View фрагмента
         selectedTunnel?.removeOnPropertyChangedCallback(tunnelStateCallback)
         stopPulseAnimation()
+        pulseAnimator = null // Грохаем старый аниматор, чтобы в startPulseAnimation создался новый для новой вьюхи
         super.onDestroyView()
     }
 }

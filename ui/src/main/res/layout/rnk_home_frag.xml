@@ -10,7 +10,7 @@
     <View
         android:id="@+id/topCurve"
         android:layout_width="match_parent"
-        android:layout_height="200dp"
+        android:layout_height="150dp"
         android:background="#0D1E3A8A"
         app:layout_constraintTop_toTopOf="parent" />
 
