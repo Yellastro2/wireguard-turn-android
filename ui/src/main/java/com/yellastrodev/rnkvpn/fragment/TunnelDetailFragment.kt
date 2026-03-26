@@ -42,8 +42,8 @@ class TunnelDetailFragment : BaseFragment(), MenuProvider {
         return when (menuItem.itemId) {
             R.id.menu_action_edit -> {
                 val activity = activity ?: return true
-                val containerId = if (activity.findViewById<View?>(R.id.detail_container) != null) {
-                    R.id.detail_container
+                val containerId = if (activity.findViewById<View?>(R.id.list_detail_container) != null) {
+                    R.id.list_detail_container
                 } else {
                     R.id.list_detail_container
                 }

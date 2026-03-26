@@ -60,7 +60,7 @@ class MainActivity : BaseActivity(), FragmentManager.OnBackStackChangedListener 
         super.onCreate(savedInstanceState)
         setContentView(R.layout.main_activity)
         actionBar = supportActionBar
-        isTwoPaneLayout = findViewById<View?>(R.id.master_detail_wrapper) != null
+        isTwoPaneLayout = false // findViewById<View?>(R.id.master_detail_wrapper) != null
         supportFragmentManager.addOnBackStackChangedListener(this)
         backPressedCallback = onBackPressedDispatcher.addCallback(this) { handleBackPressed() }
         onBackStackChanged()
@@ -81,7 +81,7 @@ class MainActivity : BaseActivity(), FragmentManager.OnBackStackChangedListener 
 
             R.id.menu_action_edit -> {
                 supportFragmentManager.commit {
-                    replace(if (isTwoPaneLayout) R.id.detail_container else R.id.list_detail_container, RNKFragmentTunnelEditor())
+                    replace(if (isTwoPaneLayout) R.id.list_detail_container else R.id.list_detail_container, RNKFragmentTunnelEditor())
                     setTransition(FragmentTransaction.TRANSIT_FRAGMENT_FADE)
                     addToBackStack(null)
                 }
@@ -119,11 +119,11 @@ class MainActivity : BaseActivity(), FragmentManager.OnBackStackChangedListener 
             fragmentManager.popBackStackImmediate()
         } else if (backStackEntries == 0) {
             // Create and show a new detail fragment.
-            fragmentManager.commit {
-                add(if (isTwoPaneLayout) R.id.detail_container else R.id.list_detail_container, TunnelDetailFragment())
-                setTransition(FragmentTransaction.TRANSIT_FRAGMENT_FADE)
-                addToBackStack(null)
-            }
+//            fragmentManager.commit {
+//                add(if (isTwoPaneLayout) R.id.list_detail_container else R.id.list_detail_container, TunnelDetailFragment())
+//                setTransition(FragmentTransaction.TRANSIT_FRAGMENT_FADE)
+//                addToBackStack(null)
+//            }
         }
         return true
     }
