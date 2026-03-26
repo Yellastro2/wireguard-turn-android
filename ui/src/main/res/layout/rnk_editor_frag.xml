@@ -160,6 +160,7 @@
                                 android:inputType="textPassword"
                                 android:text="gost-private-key-mock-data-123" />
                             <ImageView
+                                android:id="@+id/fr_edit_key_icon"
                                 android:layout_width="20dp"
                                 android:layout_height="20dp"
                                 android:src="@drawable/ic_key"

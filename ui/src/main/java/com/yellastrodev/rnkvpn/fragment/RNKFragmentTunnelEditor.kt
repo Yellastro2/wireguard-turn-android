@@ -169,7 +169,7 @@ class RNKFragmentTunnelEditor : BaseFragment() {
         view.findViewById<View>(R.id.btnCancel).setOnClickListener { onFinished() }
 
         // Генерация ключа (иконка в FrameLayout)
-        view.findViewById<View>(R.id.etPrivateKey).setOnClickListener { onKeyClick(it) }
+        view.findViewById<View>(R.id.fr_edit_key_icon).setOnClickListener { onKeyClick(it) }
 
         // Кнопка добавления нового пира
         view.findViewById<View>(R.id.fr_edit_addpeer_layout).setOnClickListener {
