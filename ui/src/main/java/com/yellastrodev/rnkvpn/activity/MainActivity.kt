@@ -43,23 +43,23 @@ class MainActivity : BaseActivity(), FragmentManager.OnBackStackChangedListener 
             supportFragmentManager.popBackStack()
 
         // Deselect the current tunnel on navigating back from the detail pane to the one-pane list.
-        if (backStackEntries == 1)
-            selectedTunnel = null
+//        if (backStackEntries == 1)
+//            selectedTunnel = null
     }
 
     override fun onBackStackChanged() {
         val backStackEntries = supportFragmentManager.backStackEntryCount
         backPressedCallback?.isEnabled = backStackEntries >= 1
-        if (actionBar == null) return
+//        if (actionBar == null) return
         // Do not show the home menu when the two-pane layout is at the detail view (see above).
         val minBackStackEntries = if (isTwoPaneLayout) 2 else 1
-        actionBar!!.setDisplayHomeAsUpEnabled(backStackEntries >= minBackStackEntries)
+//        actionBar!!.setDisplayHomeAsUpEnabled(backStackEntries >= minBackStackEntries)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.main_activity)
-        actionBar = supportActionBar
+//        actionBar = supportActionBar
         isTwoPaneLayout = false // findViewById<View?>(R.id.master_detail_wrapper) != null
         supportFragmentManager.addOnBackStackChangedListener(this)
         backPressedCallback = onBackPressedDispatcher.addCallback(this) { handleBackPressed() }

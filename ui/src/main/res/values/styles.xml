@@ -4,6 +4,13 @@
   -->
 <resources xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <style name="RNKTheme" parent="Theme.AppCompat.NoActionBar">
+        <!-- Customize your theme here. -->
+        <item name="android:windowBackground">@color/slate_50</item>
+        <item name="android:statusBarColor">@color/slate_50</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+
     <style name="WireGuardTheme.Toolbar" parent="Widget.Material3.Toolbar">
         <item name="android:background">?attr/colorSurface</item>
     </style>

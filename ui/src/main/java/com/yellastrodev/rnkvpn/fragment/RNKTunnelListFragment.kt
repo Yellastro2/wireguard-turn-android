@@ -20,10 +20,8 @@ import com.google.android.material.snackbar.Snackbar
 import com.yellastrodev.rknvpn.Application
 import com.yellastrodev.rknvpn.R
 import com.yellastrodev.rknvpn.activity.TunnelCreatorActivity
-import com.yellastrodev.rknvpn.databinding.ObservableKeyedArrayList
 import com.yellastrodev.rknvpn.model.ObservableTunnel
 import com.yellastrodev.rknvpn.util.ErrorMessages
-import com.yellastrodev.rknvpn.util.TunnelImporter
 import com.yellastrodev.rnkvpn.fragment.RNKFragmentTunnelEditor
 import kotlinx.coroutines.launch
 
@@ -39,7 +37,7 @@ class RNKTunnelListFragment : BaseFragment() {
     private lateinit var etCitizenKey: android.widget.EditText   // если нужно будет редактировать
 
     private val tunnelAdapter by lazy {
-        TunnelListAdapter { tunnel, action ->
+        TunnelListAdapter(selectedTunnel) { tunnel, action ->
             when (action) {
                 TunnelListAction.CLICK -> connectToTunnel(tunnel)
                 TunnelListAction.EDIT -> openEditor(tunnel)
@@ -53,6 +51,7 @@ class RNKTunnelListFragment : BaseFragment() {
         container: ViewGroup?,
         savedInstanceState: Bundle?
     ): View {
+        Log.d(TAG, "[onCreateView]")
         rootView = inflater.inflate(R.layout.rnk_list_frag, container, false)
         initViews()
         setupRecyclerView()
@@ -83,6 +82,7 @@ class RNKTunnelListFragment : BaseFragment() {
         lifecycleScope.launch {
             try {
                 val tunnels = Application.getTunnelManager().getTunnels()
+                Log.d(TAG, "[loadTunnels] Загружено ${tunnels.size} туннелей")
                 tunnelAdapter.submitList(tunnels.toList())   // или .submitList(tunnels.values.toList())
             } catch (e: Throwable) {
                 Log.e(TAG, "Ошибка загрузки списка туннелей", e)
@@ -93,15 +93,21 @@ class RNKTunnelListFragment : BaseFragment() {
     private fun connectToTunnel(tunnel: ObservableTunnel) {
         lifecycleScope.launch {
             try {
+                Log.d(TAG, "Переключение to tunnel ${tunnel.name}")
+
                 // Переключаем выбранный туннель
+                val isActive = selectedTunnel?.state == com.wireguard.android.backend.Tunnel.State.UP
+
                 selectedTunnel = tunnel
 
-                // Включаем его
-                if (tunnel.state != com.wireguard.android.backend.Tunnel.State.UP) {
-                    tunnel.setStateAsync(com.wireguard.android.backend.Tunnel.State.UP)
-                }
+                if (isActive) {
+                    // Включаем его
+                    if (tunnel.state != com.wireguard.android.backend.Tunnel.State.UP) {
+                        tunnel.setStateAsync(com.wireguard.android.backend.Tunnel.State.UP)
+                    }
 
-                Toast.makeText(requireContext(), "Подключаемся к ${tunnel.name}", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(requireContext(), "Подключаемся к ${tunnel.name}", Toast.LENGTH_SHORT).show()
+                }
                 tunnelAdapter.notifyDataSetChanged()   // просто для обновления иконки
             } catch (e: Throwable) {
                 val error = ErrorMessages[e]
@@ -157,7 +163,7 @@ class RNKTunnelListFragment : BaseFragment() {
     @SuppressLint("NotifyDataSetChanged")
     override fun onSelectedTunnelChanged(oldTunnel: ObservableTunnel?, newTunnel: ObservableTunnel?) {
         Log.d(TAG, "onSelectedTunnelChanged: oldTunnel=$oldTunnel, newTunnel=$newTunnel")
-
+        tunnelAdapter.selectedTunnel = newTunnel
         tunnelAdapter.notifyDataSetChanged()   // простой способ, можно оптимизировать позже
     }
 

@@ -25,6 +25,7 @@ import kotlinx.coroutines.withContext
  * Адаптер для списка узлов связи в RNKTunnelListFragment
  */
 class TunnelListAdapter(
+    var selectedTunnel: ObservableTunnel?,
     private val onAction: (tunnel: ObservableTunnel, action: TunnelListAction) -> Unit
 ) : ListAdapter<ObservableTunnel, TunnelListAdapter.TunnelViewHolder>(TunnelDiffCallback()) {
 
@@ -36,7 +37,7 @@ class TunnelListAdapter(
 
     override fun onBindViewHolder(holder: TunnelViewHolder, position: Int) {
         Log.d("TunnelListAdapter", "onBindViewHolder: position=$position")
-        holder.bind(getItem(position))
+        holder.bind(getItem(position), selectedTunnel)
     }
 
     /**
@@ -79,7 +80,7 @@ class TunnelListAdapter(
             }
         }
 
-        fun bind(tunnel: ObservableTunnel) {
+        fun bind(tunnel: ObservableTunnel, selectedTunnel: ObservableTunnel?) {
             currentTunnel = tunnel
 
             tvNodeName.text = tunnel.name
@@ -96,7 +97,8 @@ class TunnelListAdapter(
             tvNodeRegion.text = "ЦФО"   // TODO: сделать динамическим при необходимости
 
             // Визуальное выделение активного туннеля
-            val isActive = tunnel.state == com.wireguard.android.backend.Tunnel.State.UP
+//            val isActive = tunnel.state == com.wireguard.android.backend.Tunnel.State.UP
+            val isActive = tunnel == selectedTunnel
             if (isActive) {
                 itemView.background = itemView.context.getDrawable(R.drawable.bg_node_active)
                 ivCheck.setImageResource(R.drawable.ic_check_circle)
