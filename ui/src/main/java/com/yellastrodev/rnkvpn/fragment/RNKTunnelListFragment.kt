@@ -6,16 +6,19 @@
 package com.yellastrodev.rknvpn.fragment
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.view.inputmethod.InputMethodManager
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.core.os.bundleOf
+import androidx.core.widget.doAfterTextChanged
 import androidx.fragment.app.commit
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -69,15 +72,7 @@ class RNKTunnelListFragment : BaseFragment() {
     }
 
     // Лаунчер для сканирования QR-кода
-    private val qrImportResultLauncher = registerForActivityResult(ScanContract()) { result ->
-        val qrCode = result.contents
-        val activity = activity
-        if (qrCode != null && activity != null) {
-            activity.lifecycleScope.launch {
-                TunnelImporter.importTunnel(parentFragmentManager, qrCode) { showSnackbar(it) }
-            }
-        }
-    }
+
 
     private val tunnelAdapter by lazy {
         TunnelListAdapter(selectedTunnel) { tunnel, action ->
@@ -106,6 +101,35 @@ class RNKTunnelListFragment : BaseFragment() {
         btnAddNode = rootView!!.findViewById(R.id.btnAddNode)
         etCitizenKey = rootView!!.findViewById(R.id.etCitizenKey)
 
+        etCitizenKey.setText(citizennKey)
+
+        etCitizenKey.doAfterTextChanged { text ->
+            // 'text' — это редактируемый Editable?
+            val input = text.toString()
+
+            if (input.isNotEmpty()){
+                // Обновляем значение в коде
+                Log.d("RNK_EDITOR", "[doAfterTextChanged] Введенный ключ гражданина: $input")
+            }
+        }
+        etCitizenKey.setOnFocusChangeListener { view, hasFocus ->
+            if (!hasFocus) {
+                // Фокус потерян — курсор убрали
+                val currentText = etCitizenKey.text.toString()
+                if (currentText.isNotEmpty()) {
+                    Log.d("RNK_EDITOR", "[setOnFocusChangeListener] Введенный ключ гражданина: $currentText")
+                    citizennKey = currentText
+                    Snackbar.make(
+                        view,
+                        "Ключ гражданина сохранён",
+                        Snackbar.LENGTH_SHORT
+                    ).show()
+                }
+                val imm = requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+                imm.hideSoftInputFromWindow(view.windowToken, 0)
+            }
+        }
+
         btnAddNode.setOnClickListener {
             showAddOptions()
         }
@@ -119,6 +143,16 @@ class RNKTunnelListFragment : BaseFragment() {
     override fun onViewStateRestored(savedInstanceState: Bundle?) {
         super.onViewStateRestored(savedInstanceState)
         loadTunnels()
+    }
+
+    private val qrImportResultLauncher = registerForActivityResult(ScanContract()) { result ->
+        val qrCode = result.contents
+        val activity = activity
+        if (qrCode != null && activity != null) {
+            activity.lifecycleScope.launch {
+                TunnelImporter.importTunnel(parentFragmentManager, qrCode) { showSnackbar(it) }
+            }
+        }
     }
 
     private fun loadTunnels() {

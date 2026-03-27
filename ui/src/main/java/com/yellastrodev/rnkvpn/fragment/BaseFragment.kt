@@ -48,6 +48,13 @@ abstract class BaseFragment : Fragment(), OnSelectedTunnelChangedListener {
             (activity as? BaseActivity)?.selectedTunnel = tunnel
         }
 
+    protected var citizennKey: String?
+        get() = (activity as? BaseActivity)?.citizennKey
+        protected set(key) {
+            (activity as? BaseActivity)?.citizennKey = key
+        }
+
+
     override fun onAttach(context: Context) {
         super.onAttach(context)
         (activity as? BaseActivity)?.addOnSelectedTunnelChangedListener(this)

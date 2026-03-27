@@ -12,6 +12,7 @@ import androidx.databinding.CallbackRegistry.NotifierCallback
 import androidx.lifecycle.lifecycleScope
 import com.yellastrodev.rknvpn.Application
 import com.yellastrodev.rknvpn.model.ObservableTunnel
+import com.yellastrodev.rknvpn.viewmodel.ConfigProxy
 import kotlinx.coroutines.launch
 
 /**
@@ -25,6 +26,7 @@ abstract class BaseActivity : AppCompatActivity() {
             val oldTunnel = field
             if (oldTunnel == value) return
             field = value
+            citizennKey ?. let { setVkLink(it, field ?: return) }
             if (created) {
                 if (!onSelectedTunnelChanged(oldTunnel, value)) {
                     field = oldTunnel
@@ -34,12 +36,43 @@ abstract class BaseActivity : AppCompatActivity() {
             }
         }
 
+    var citizennKey: String? = null
+        set(value) {
+            field = value
+            value ?. let { link ->
+                selectedTunnel?.let { tunnel ->
+                    Log.d("BaseActivity", "citizennKey = $link смена на ${tunnel.name}")
+                    setVkLink(link, tunnel)
+                    val prefs = getSharedPreferences("vpn_prefs", MODE_PRIVATE)
+                    prefs.edit().putString("vk_link", value).apply()
+                }
+            }
+        }
+
+    fun setVkLink(link: String, tunnel: ObservableTunnel) {
+        if (tunnel.turnSettings == null || tunnel.config == null) return
+        val configProxy = ConfigProxy(tunnel.config!!, tunnel.turnSettings)
+        if (link != configProxy.turn.vkLink) {
+            configProxy.turn.vkLink = link
+            val config = configProxy.resolve()
+            val turnSettings = configProxy.resolveTurnSettings()
+            lifecycleScope.launch {
+                Application.getTunnelManager().setTunnelConfig(tunnel, config, turnSettings)
+            }
+        }
+    }
+
+
     fun addOnSelectedTunnelChangedListener(listener: OnSelectedTunnelChangedListener) {
         selectionChangeRegistry.add(listener)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+
+        val prefs = getSharedPreferences("vpn_prefs", MODE_PRIVATE)
+        citizennKey = prefs.getString("vk_link", "RU-77-XF90-2026-BETA")
 
         // Restore the saved tunnel if there is one; otherwise grab it from the arguments.
         val savedTunnelName = when {
