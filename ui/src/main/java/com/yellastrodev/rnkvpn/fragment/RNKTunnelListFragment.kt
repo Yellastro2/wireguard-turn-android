@@ -100,6 +100,12 @@ class RNKTunnelListFragment : BaseFragment() {
 
                 selectedTunnel = tunnel
 
+                // тут сохраняем выбранный тунель по айди в префы что бы после перезапуска его селектнуть
+                // 1. Save the selected tunnel ID to SharedPreferences
+                val prefs = requireContext().getSharedPreferences("vpn_prefs", android.content.Context.MODE_PRIVATE)
+                prefs.edit().putString("last_used_tunnel", tunnel.name).apply()
+
+
                 if (isActive) {
                     // Включаем его
                     if (tunnel.state != com.wireguard.android.backend.Tunnel.State.UP) {

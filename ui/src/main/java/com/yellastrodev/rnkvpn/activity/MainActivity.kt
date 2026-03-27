@@ -73,6 +73,13 @@ class MainActivity : BaseActivity(), FragmentManager.OnBackStackChangedListener 
                 val lastTunnel = Application.getTunnelManager().lastUsedTunnel
                 if (lastTunnel != null) {
                     selectedTunnel = lastTunnel
+                }else {
+
+                    val prefs = getSharedPreferences("vpn_prefs", android.content.Context.MODE_PRIVATE)
+                    val lastUsedTunnelName = prefs.getString("last_used_tunnel", null)
+                    lastUsedTunnelName?. let {
+                        selectedTunnel = Application.getTunnelManager().getTunnels()[it]
+                    }
                 }
             } catch (e: Throwable) {
 
