@@ -4,7 +4,7 @@
   -->
 <resources xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <style name="RNKTheme" parent="Theme.AppCompat.NoActionBar">
+    <style name="RNKTheme" parent="Theme.AppCompat.Light.NoActionBar">
         <!-- Customize your theme here. -->
         <item name="android:windowBackground">@color/slate_50</item>
         <item name="android:statusBarColor">@color/slate_50</item>

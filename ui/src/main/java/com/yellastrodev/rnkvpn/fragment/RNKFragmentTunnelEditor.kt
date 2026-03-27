@@ -10,12 +10,8 @@ import android.os.Bundle
 import android.text.InputType
 import android.util.Log
 import android.view.LayoutInflater
-import android.view.Menu
-import android.view.MenuInflater
-import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
-import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
 import android.widget.CheckBox
 import android.widget.EditText
@@ -23,18 +19,11 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Toast
 import androidx.appcompat.widget.SwitchCompat
-import androidx.core.os.BundleCompat
-import androidx.core.view.MenuProvider
-import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.snackbar.Snackbar
 import com.yellastrodev.rknvpn.Application
 import com.yellastrodev.rknvpn.R
-import com.wireguard.android.backend.Tunnel
-import com.yellastrodev.rknvpn.databinding.TunnelEditorFragmentBinding
 import com.yellastrodev.rknvpn.model.ObservableTunnel
-import com.yellastrodev.rknvpn.util.AdminKnobs
-import com.yellastrodev.rknvpn.util.BiometricAuthenticator
 import com.yellastrodev.rknvpn.util.ErrorMessages
 import com.yellastrodev.rknvpn.viewmodel.ConfigProxy
 import com.wireguard.config.Config
@@ -77,6 +66,7 @@ class RNKFragmentTunnelEditor : BaseFragment() {
     private lateinit var peersContainer: LinearLayout // Тот самый peers_layout
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
+        Log.d("RNK_EDITOR_LIFECYCLE", "onCreateView вызван")
         super.onCreateView(inflater, container, savedInstanceState)
         val view = inflater.inflate(R.layout.rnk_editor_frag, container, false)
         initViews(view)
@@ -107,15 +97,21 @@ class RNKFragmentTunnelEditor : BaseFragment() {
         super.onViewStateRestored(savedInstanceState)
 
         if (savedInstanceState == null) {
-            // ←←← Вот это и вызывает колбэк, когда туннель уже выбран
-            onSelectedTunnelChanged(null, selectedTunnel)
+            val tunnelName = arguments?.getString(KEY_TUNNEL_NAME)
+            if (tunnelName != null) {
+                lifecycleScope.launch {
+                    val t = Application.getTunnelManager().getTunnels()[tunnelName]
+                    if (t != null) {
+                        selectedTunnel = t
+                    }
+                    onSelectedTunnelChanged(null, t)
+                }
+            } else {
+                onSelectedTunnelChanged(null, selectedTunnel)
+            }
         } else {
             // Восстановление после поворота экрана и т.п.
             tunnel = selectedTunnel
-
-            // Если потом будешь сохранять состояние (как в оригинале), добавишь сюда:
-            // val config = BundleCompat.getParcelable(savedInstanceState, KEY_LOCAL_CONFIG, ConfigProxy::class.java)
-            // ...
         }
     }
 
@@ -241,6 +237,7 @@ class RNKFragmentTunnelEditor : BaseFragment() {
         val i = configProxy.`interface`
         val t = configProxy.turn
 
+        Log.d("RNK_EDITOR", "[syncModelToUi]: name = ${tunnel?.name}")
         etNodeName.setText(tunnel?.name)
 
         etPrivateKey.setText(i.privateKey)
@@ -417,11 +414,6 @@ class RNKFragmentTunnelEditor : BaseFragment() {
             etKeepalive.setText(peerProxy.persistentKeepalive)
             cbExcludePrivate.isChecked = peerProxy.isExcludingPrivateIps
 
-//            etAllowedIps.addTextChangedListener {
-//                val canExclude = peerProxy.isAbleToExcludePrivateIps // Проверь это имя в своем PeerProxy
-//                cbExcludePrivate.visibility = if (canExclude) View.VISIBLE else View.GONE
-//            }
-
             // Применяем фильтр ключей
             etPublicKey.filters = arrayOf(KeyInputFilter.newInstance())
             etPresharedKey.filters = arrayOf(KeyInputFilter.newInstance())
@@ -436,5 +428,9 @@ class RNKFragmentTunnelEditor : BaseFragment() {
             peerProxy.persistentKeepalive = etKeepalive.text.toString()
 //            peerProxy.isExcludingPrivateIps = cbExcludePrivate.isChecked
         }
+    }
+
+    companion object {
+        const val KEY_TUNNEL_NAME = "tunnel_name"
     }
 }
