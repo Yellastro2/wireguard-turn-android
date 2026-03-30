@@ -37,6 +37,9 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+class TunnelVkLinkException(message: String) : Exception(message)
+
+
 /**
  * Maintains and mediates changes to the set of available WireGuard tunnels,
  */
@@ -300,7 +303,12 @@ class TunnelManager(
                         getTurnProxyManager().onTunnelEstablished(tunnel.name, turn)
                     }
                     if (!turnStarted) {
-                        Log.w(TAG, "TURN proxy start returned false, but tunnel is up")
+                        Log.w(TAG, "TURN proxy start returned false, but tunnel is up. Shutting down...")
+                        // ЖЕСТКО ВЫРУБАЕМ WIREGUARD ОБРАТНО, ТАК КАК ПРОКСИ СДОХ
+                        withContext(Dispatchers.IO) { getBackend().setState(tunnel, Tunnel.State.DOWN, null) }
+                        newState = Tunnel.State.DOWN
+                        // Выкидываем ошибку, чтобы интерфейс понял, что соединение не удалось
+                        throw TunnelVkLinkException("Ошибка TURN-прокси (возможно, ссылка VK протухла)")
                     }
                 } else {
                     Log.w(TAG, "TURN not enabled for tunnel ${tunnel.name}, skipping")

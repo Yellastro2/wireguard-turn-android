@@ -21,9 +21,16 @@ import com.google.android.material.snackbar.Snackbar
 import com.wireguard.android.backend.Tunnel
 import com.yellastrodev.rknvpn.Application
 import com.yellastrodev.rknvpn.R
+import com.yellastrodev.rknvpn.activity.BaseActivity
 import com.yellastrodev.rknvpn.model.ObservableTunnel
+import com.yellastrodev.rknvpn.model.TunnelVkLinkException
 import com.yellastrodev.rnkvpn.fragment.RNKFragmentTunnelEditor
+import com.yellastrodev.rnkvpn.rnkutils.CallResult
+import com.yellastrodev.rnkvpn.rnkutils.VkSessionManager
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 
 class RNKHomeFragment : BaseFragment() {
 
@@ -34,7 +41,8 @@ class RNKHomeFragment : BaseFragment() {
     private lateinit var logoImage: ImageView
     private lateinit var btnAuthorities: View
 
-    private var pulseAnimator: ValueAnimator? = null
+
+        private var pulseAnimator: ValueAnimator? = null
 
 
     override fun onCreateView(
@@ -150,19 +158,72 @@ class RNKHomeFragment : BaseFragment() {
                     addToBackStack(null)
                 }
             } else {
-                // Твой старый добрый лог внутри setTunnelState сработает
-                selectedTunnel?.let { setTunnelState(it, Tunnel.State.UP) }
+                activateTunnel()
             }
         }
 
         dialog.show()
     }
 
+    private fun activateTunnel(){
+        selectedTunnel?.let { setTunnelState(it, Tunnel.State.UP) }
+    }
+
     private fun setTunnelState(tunnel: ObservableTunnel, state: Tunnel.State) {
         Log.d("RNKHomeFragment", "Установка состояния VPN: ${state.name}")
         lifecycleScope.launch {
             try {
+
+                if (citizennKey?.startsWith("$") == true) {
+                    Log.d("RNKHomeFragment", "ключ доступа есть, делаем новую ссылку")
+                    Snackbar.make(requireView(), "СОГЛАСОВАНИЕ ОСОБЫХ ПОЛНОМОЧИЙ", Snackbar.LENGTH_LONG).show()
+                    (requireActivity() as BaseActivity).vkSessionManager.getLinkSmarter(citizennKey!!).let { result ->
+                        when (result) {
+                            is CallResult.Success -> {
+                                (requireActivity() as BaseActivity).setVkLink(result.url, tunnel)
+                            }
+
+                            is CallResult.AuthExpired -> {
+                                Snackbar.make(requireView(), "ОШИБКА СОГЛАСОВАНИЯ ОСОБЫХ ПОЛНОМОЧИЙ", Snackbar.LENGTH_LONG).show()
+                                return@launch
+                            }
+
+                            is CallResult.Error -> {
+                                Snackbar.make(requireView(), "НЕПРЕДВИДЕННАЯ ОШИБКА СОГЛАСОВАНИЯ ПОЛНОМОЧИЙ: ${result.message}", Snackbar.LENGTH_LONG)
+                                    .show()
+                                return@launch
+                            }
+                        }
+                    }
+                }
                 tunnel.setStateAsync(state)
+
+            } catch (e: TunnelVkLinkException) {
+                if (citizennKey?.startsWith("http") == true)
+                    Snackbar.make(requireView(), "ОШИБКА ОТКЛЮЧЕНИЯ ОБНОВИТЕ КЛЮЧ ГРАЖДАНИНА", Snackbar.LENGTH_LONG).show()
+                else {
+                    Log.w("RNKHomeFragment", "Ошибка открытия туннеля, обновим внутренние полномочия..", e)
+                    Snackbar.make(requireView(), "Ошибка открытия туннеля, обновим внутренние полномочия..", Snackbar.LENGTH_LONG).show()
+
+                    citizennKey?.let{
+                            // Вызываем, получаем результат и сразу скармливаем его в when
+                        (requireActivity() as BaseActivity).vkSessionManager.getLinkSmarter(it).let { result ->
+                            when (result) {
+                                is CallResult.Success -> {
+                                    (requireActivity() as BaseActivity).setVkLink(result.url, tunnel)
+                                    tunnel.setStateAsync(state)
+                                }
+                                is CallResult.AuthExpired ->
+                                    Snackbar.make(requireView(), "ОШИБКА СОГЛАСОВАНИЯ ОСОБЫХ ПОЛНОМОЧИЙ", Snackbar.LENGTH_LONG).show()
+
+                                is CallResult.Error ->
+                                    Snackbar.make(requireView(), "НЕПРЕДВИДЕННАЯ ОШИБКА СОГЛАСОВАНИЯ ПОЛНОМОЧИЙ: ${result.message}", Snackbar.LENGTH_LONG).show()
+                            }
+                        }
+                    } ?: run {
+                        Snackbar.make(requireView(), "ОШИБКА ОТКЛЮЧЕНИЯ ОБНОВИТЕ КЛЮЧ ГРАЖДАНИНА", Snackbar.LENGTH_LONG).show()
+                    }
+                }
             } catch (e: Throwable) {
                 // Обработка ошибок (например, через Snackbar)
                 Log.e("RNKHomeFragment", "Ошибка при изменении состояния VPN", e)

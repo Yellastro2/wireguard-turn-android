@@ -10,10 +10,14 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.databinding.CallbackRegistry
 import androidx.databinding.CallbackRegistry.NotifierCallback
 import androidx.lifecycle.lifecycleScope
+import com.google.android.material.snackbar.Snackbar
 import com.yellastrodev.rknvpn.Application
 import com.yellastrodev.rknvpn.model.ObservableTunnel
 import com.yellastrodev.rknvpn.viewmodel.ConfigProxy
+import com.yellastrodev.rnkvpn.rnkutils.CallResult
+import com.yellastrodev.rnkvpn.rnkutils.VkSessionManager
 import kotlinx.coroutines.launch
+import java.io.File
 
 /**
  * Base class for activities that need to remember the currently-selected tunnel.
@@ -42,12 +46,30 @@ abstract class BaseActivity : AppCompatActivity() {
             value ?. let { link ->
                 selectedTunnel?.let { tunnel ->
                     Log.d("BaseActivity", "citizennKey = $link смена на ${tunnel.name}")
-                    setVkLink(link, tunnel)
+                    if (link.startsWith("http"))
+                        setVkLink(link, tunnel)
+                    else{
+                        val result = vkSessionManager.getLinkSmarter(link)
+                        when (result) {
+                            is CallResult.Success -> {setVkLink(result.url, tunnel)
+                            }
+                            is CallResult.AuthExpired ->
+                                Log.e("BaseActivity", "Ошибка генератора ссылки, ключ протух")
+
+                            is CallResult.Error ->
+                                Log.e("BaseActivity", "Ошибка генератора ссылки: ${result.message}")
+                        }
+                    }
                     val prefs = getSharedPreferences("vpn_prefs", MODE_PRIVATE)
                     prefs.edit().putString("vk_link", value).apply()
                 }
             }
         }
+
+
+    val vkSessionManager by lazy {
+        VkSessionManager(File(filesDir, "ok_sessions.json"))
+    }
 
     fun setVkLink(link: String, tunnel: ObservableTunnel) {
         if (tunnel.turnSettings == null || tunnel.config == null) return
