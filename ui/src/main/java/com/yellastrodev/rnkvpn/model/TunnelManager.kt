@@ -28,6 +28,8 @@ import com.yellastrodev.rknvpn.util.ErrorMessages
 import com.yellastrodev.rknvpn.util.UserKnobs
 import com.yellastrodev.rknvpn.util.applicationScope
 import com.wireguard.config.Config
+import com.yellastrodev.rnkvpn.viewmodel.TunnelViewModel
+import com.yellastrodev.rnkvpn.viewmodel.ViewTunnelState
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -65,6 +67,9 @@ class TunnelManager(
         tunnelMap.add(tunnel)
         return tunnel
     }
+
+    var activityViewModel: TunnelViewModel? = null
+
 
     suspend fun getTunnels(): ObservableSortedKeyedArrayList<String, ObservableTunnel> = tunnels.await()
 
@@ -261,6 +266,7 @@ class TunnelManager(
     }
 
     suspend fun setTunnelState(tunnel: ObservableTunnel, state: Tunnel.State): Tunnel.State = withContext(Dispatchers.Main.immediate) {
+        Log.d(TAG, "[setTunnelState] Setting state of ${tunnel.name} to $state")
         if (state == tunnel.state) return@withContext state
         
         // If we are already UP and someone (like AlwaysOnCallback) requests UP again,
@@ -268,7 +274,7 @@ class TunnelManager(
         if (state == Tunnel.State.UP && tunnel.state == Tunnel.State.UP) {
             val runningNames = withContext(Dispatchers.IO) { getBackend().runningTunnelNames }
             if (runningNames.contains(tunnel.name)) {
-                Log.d(TAG, "Skip redundant UP call for ${tunnel.name}, already running")
+                Log.d(TAG, "[setTunnelState] Skip redundant UP call for ${tunnel.name}, already running")
                 return@withContext state
             }
         }
@@ -278,11 +284,13 @@ class TunnelManager(
         try {
             var configToUse = tunnel.getConfigAsync()
             if (state == Tunnel.State.UP) {
+                Log.d(TAG, "[setTunnelState] Поднятие тунеля")
                 val turn = tunnel.turnSettings
                 if (turn != null && turn.enabled) {
                     configToUse = TurnConfigProcessor.modifyConfigForActiveTurn(configToUse, turn)
                 }
             } else if (state == Tunnel.State.DOWN) {
+                Log.d(TAG, "[setTunnelState] Опускание тунеля")
                 val turn = tunnel.turnSettings
                 if (turn != null && turn.enabled) {
                     withContext(Dispatchers.IO) {
@@ -292,18 +300,20 @@ class TunnelManager(
             }
             newState = withContext(Dispatchers.IO) { getBackend().setState(tunnel, state, configToUse) }
 
+            Log.d(TAG, "[setTunnelState] новый стейт: ${newState.name}")
+
             // NEW: Start TURN AFTER tunnel is established
             // This ensures VpnService.protect() will work for TURN sockets
             if (newState == Tunnel.State.UP && state == Tunnel.State.UP) {
                 // Use tunnel.turnSettings (already loaded from turnSettingsStore)
                 val turn = tunnel.turnSettings
                 if (turn != null && turn.enabled) {
-                    Log.d(TAG, "Tunnel established, starting TURN proxy...")
+                    Log.d(TAG, "[setTunnelState] Tunnel established, starting TURN proxy...")
                     val turnStarted = withContext(Dispatchers.IO) {
                         getTurnProxyManager().onTunnelEstablished(tunnel.name, turn)
                     }
                     if (!turnStarted) {
-                        Log.w(TAG, "TURN proxy start returned false, but tunnel is up. Shutting down...")
+                        Log.w(TAG, "[setTunnelState] TURN proxy start returned false, but tunnel is up. Shutting down...")
                         // ЖЕСТКО ВЫРУБАЕМ WIREGUARD ОБРАТНО, ТАК КАК ПРОКСИ СДОХ
                         withContext(Dispatchers.IO) { getBackend().setState(tunnel, Tunnel.State.DOWN, null) }
                         newState = Tunnel.State.DOWN
@@ -311,8 +321,12 @@ class TunnelManager(
                         throw TunnelVkLinkException("Ошибка TURN-прокси (возможно, ссылка VK протухла)")
                     }
                 } else {
-                    Log.w(TAG, "TURN not enabled for tunnel ${tunnel.name}, skipping")
+                    Log.w(TAG, "[setTunnelState] TURN not enabled for tunnel ${tunnel.name}, skipping")
                 }
+            }
+            Log.w(TAG, "[setTunnelState] Тунель поднят и соединен!")
+            activityViewModel?. let {
+                it.updateState(ViewTunnelState.Active)
             }
 
             if (newState == Tunnel.State.UP) {

@@ -216,7 +216,7 @@ class TurnProxyManager(private val context: Context) {
         // We delay slightly to ensure we don't catch the immediate network fluctuation caused by VPN itself
         scope.launch {
             delay(2000)
-            Log.d(TAG, "Initialization phase complete, network monitoring active")
+            Log.d(TAG, "Initialization phase complete, network monitoring active: $success")
         }
         
         return success

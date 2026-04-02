@@ -15,8 +15,11 @@ import android.widget.ImageView
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
+import androidx.fragment.app.activityViewModels
 import androidx.fragment.app.commit
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.google.android.material.snackbar.Snackbar
 import com.wireguard.android.backend.Tunnel
 import com.yellastrodev.rknvpn.Application
@@ -27,6 +30,8 @@ import com.yellastrodev.rknvpn.model.TunnelVkLinkException
 import com.yellastrodev.rnkvpn.fragment.RNKFragmentTunnelEditor
 import com.yellastrodev.rnkvpn.rnkutils.CallResult
 import com.yellastrodev.rnkvpn.rnkutils.VkSessionManager
+import com.yellastrodev.rnkvpn.viewmodel.TunnelViewModel
+import com.yellastrodev.rnkvpn.viewmodel.ViewTunnelState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -42,7 +47,9 @@ class RNKHomeFragment : BaseFragment() {
     private lateinit var btnAuthorities: View
 
 
-        private var pulseAnimator: ValueAnimator? = null
+    private var pulseAnimator: ValueAnimator? = null
+
+    private val viewModel: TunnelViewModel by activityViewModels()
 
 
     override fun onCreateView(
@@ -73,11 +80,27 @@ class RNKHomeFragment : BaseFragment() {
             handleButtonClick()
         }
 
-//        selectedTunnel?.let { currentTunnel ->
-//            updateUI(currentTunnel)
-//        } ?: run {
-//            startPulseAnimation()
-//        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.state.collect { currentState ->
+                    when (currentState) {
+                        is ViewTunnelState.Idle -> {
+                            setTunnelDisable()
+                        }
+                        is ViewTunnelState.Connecting -> {
+                            setTunnelConnecting()
+                        }
+                        is ViewTunnelState.Active -> {
+                            setTunnelEnable()
+                        }
+                        is ViewTunnelState.Error -> {
+
+                        }
+                    }
+                }
+            }
+        }
 
 
         return view
@@ -166,7 +189,40 @@ class RNKHomeFragment : BaseFragment() {
     }
 
     private fun activateTunnel(){
-        selectedTunnel?.let { setTunnelState(it, Tunnel.State.UP) }
+
+        viewModel.updateState(ViewTunnelState.Connecting)
+
+        selectedTunnel?.let { tunnel ->
+
+            if (citizennKey?.startsWith("$") == true) {
+                Log.d("RNKHomeFragment", "ключ доступа есть, делаем новую ссылку")
+                Snackbar.make(requireView(), "СОГЛАСОВАНИЕ ОСОБЫХ ПОЛНОМОЧИЙ", Snackbar.LENGTH_LONG).show()
+                val linkSuccess = (requireActivity() as BaseActivity).vkSessionManager.getLinkSmarter(citizennKey!!).let { result ->
+                    when (result) {
+                        is CallResult.Success -> {
+                            (requireActivity() as BaseActivity).setVkLink(result.url, tunnel)
+                            return@let true //
+                        }
+
+                        is CallResult.AuthExpired -> {
+                            Snackbar.make(requireView(), "ОШИБКА СОГЛАСОВАНИЯ ОСОБЫХ ПОЛНОМОЧИЙ ПРОВЕРЬТЕ СВОЙ КЛЮЧ ГРАЖДАНИНА", Snackbar.LENGTH_LONG).show()
+
+                            return@let false
+                        }
+
+                        is CallResult.Error -> {
+                            Snackbar.make(requireView(), "НЕПРЕДВИДЕННАЯ ОШИБКА СОГЛАСОВАНИЯ ПОЛНОМОЧИЙ: ${result.message}", Snackbar.LENGTH_LONG)
+                                .show()
+                            return@let false
+                        }
+                    }
+                }
+
+                if (!linkSuccess)
+                    return
+            }
+            setTunnelState(tunnel, Tunnel.State.UP)
+        }
     }
 
     private fun setTunnelState(tunnel: ObservableTunnel, state: Tunnel.State) {
@@ -174,28 +230,7 @@ class RNKHomeFragment : BaseFragment() {
         lifecycleScope.launch {
             try {
 
-                if (citizennKey?.startsWith("$") == true) {
-                    Log.d("RNKHomeFragment", "ключ доступа есть, делаем новую ссылку")
-                    Snackbar.make(requireView(), "СОГЛАСОВАНИЕ ОСОБЫХ ПОЛНОМОЧИЙ", Snackbar.LENGTH_LONG).show()
-                    (requireActivity() as BaseActivity).vkSessionManager.getLinkSmarter(citizennKey!!).let { result ->
-                        when (result) {
-                            is CallResult.Success -> {
-                                (requireActivity() as BaseActivity).setVkLink(result.url, tunnel)
-                            }
-
-                            is CallResult.AuthExpired -> {
-                                Snackbar.make(requireView(), "ОШИБКА СОГЛАСОВАНИЯ ОСОБЫХ ПОЛНОМОЧИЙ", Snackbar.LENGTH_LONG).show()
-                                return@launch
-                            }
-
-                            is CallResult.Error -> {
-                                Snackbar.make(requireView(), "НЕПРЕДВИДЕННАЯ ОШИБКА СОГЛАСОВАНИЯ ПОЛНОМОЧИЙ: ${result.message}", Snackbar.LENGTH_LONG)
-                                    .show()
-                                return@launch
-                            }
-                        }
-                    }
-                }
+                Log.d("RNKHomeFragment", "[setTunnelState] Установка состояния VPN: ${state.name}")
                 tunnel.setStateAsync(state)
 
             } catch (e: TunnelVkLinkException) {
@@ -211,7 +246,12 @@ class RNKHomeFragment : BaseFragment() {
                             when (result) {
                                 is CallResult.Success -> {
                                     (requireActivity() as BaseActivity).setVkLink(result.url, tunnel)
-                                    tunnel.setStateAsync(state)
+                                    try {
+                                        tunnel.setStateAsync(state)
+                                    } catch (e: Throwable) {
+                                        Log.e("RNKHomeFragment", "[setTunnelState] Ошибка при изменении состояния VPN после ошибки и пересброса вклинк", e)
+                                        Snackbar.make(requireView(), "ОШИБКА ОТКРЫТИЯ ДОСТУПА К УЗЛУ", Snackbar.LENGTH_LONG).show()
+                                    }
                                 }
                                 is CallResult.AuthExpired ->
                                     Snackbar.make(requireView(), "ОШИБКА СОГЛАСОВАНИЯ ОСОБЫХ ПОЛНОМОЧИЙ", Snackbar.LENGTH_LONG).show()
@@ -242,7 +282,9 @@ class RNKHomeFragment : BaseFragment() {
 
                 // Обновляем UI в главном потоке
                 lifecycleScope.launch {
-                    updateUI(tunnel)
+                    if (tunnel?.state == Tunnel.State.DOWN)
+                        viewModel.updateState(ViewTunnelState.Idle)
+//                    updateUI(tunnel)
                 }
             }
         }
@@ -259,6 +301,40 @@ class RNKHomeFragment : BaseFragment() {
         updateUI(newTunnel)
     }
 
+
+    private fun setTunnelDisable(){
+        statusTitle.text = "Защита суверенитета включена"
+        statusTitle.setTextColor(Color.parseColor("#059669"))
+        statusDesc.text = "Трафик инспектируется. Угроз не обнаручено."
+
+        mainButton.setBackgroundResource(R.drawable.bg_button_protected)
+        logoImage.setImageResource(R.drawable.ic_logo_protected)
+
+        startPulseAnimation()
+    }
+
+    private fun setTunnelEnable(){
+        statusTitle.text = "Защита суверенитета отключена"
+        statusTitle.setTextColor(Color.parseColor("#DC2626"))
+        statusDesc.text = "Инспектор отключен. Соединение уязвимо."
+
+        mainButton.setBackgroundResource(R.drawable.bg_button_unprotected)
+        logoImage.setImageResource(R.drawable.ic_logo_unprotected)
+
+        stopPulseAnimation()
+    }
+
+    private fun setTunnelConnecting(){
+        statusTitle.text = "ОТКЛЮЧЕНИЕ. ОЖИДАЙТЕ"
+        statusTitle.setTextColor(Color.parseColor("#DC2626"))
+        statusDesc.text = "Инспектор отключен. Соединение уязвимо."
+
+        mainButton.setBackgroundResource(R.drawable.bg_button_unprotected)
+        logoImage.setImageResource(R.drawable.ic_logo_unprotected)
+
+//        stopPulseAnimation()
+    }
+
     private fun updateUI(tunnel: ObservableTunnel?) {
         Log.d("RNKHomeFragment", "[updateUI] туннеля: ${tunnel?.name} ${tunnel?.state?.name}")
 
@@ -267,23 +343,9 @@ class RNKHomeFragment : BaseFragment() {
         Log.d("RNKHomeFragment", "[updateUI] isDangeur: $isDangeur")
 
         if (!isDangeur) {
-            statusTitle.text = "Защита суверенитета включена"
-            statusTitle.setTextColor(Color.parseColor("#059669"))
-            statusDesc.text = "Трафик инспектируется. Угроз не обнаручено."
-
-            mainButton.setBackgroundResource(R.drawable.bg_button_protected)
-            logoImage.setImageResource(R.drawable.ic_logo_protected)
-
-            startPulseAnimation()
+            setTunnelDisable()
         } else {
-            statusTitle.text = "Защита суверенитета отключена"
-            statusTitle.setTextColor(Color.parseColor("#DC2626"))
-            statusDesc.text = "Инспектор отключен. Соединение уязвимо."
-
-            mainButton.setBackgroundResource(R.drawable.bg_button_unprotected)
-            logoImage.setImageResource(R.drawable.ic_logo_unprotected)
-
-            stopPulseAnimation()
+            setTunnelEnable()
         }
     }
 

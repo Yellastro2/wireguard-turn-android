@@ -6,6 +6,7 @@ package com.yellastrodev.rknvpn.activity
 
 import android.os.Bundle
 import android.util.Log
+import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.databinding.CallbackRegistry
 import androidx.databinding.CallbackRegistry.NotifierCallback
@@ -16,6 +17,7 @@ import com.yellastrodev.rknvpn.model.ObservableTunnel
 import com.yellastrodev.rknvpn.viewmodel.ConfigProxy
 import com.yellastrodev.rnkvpn.rnkutils.CallResult
 import com.yellastrodev.rnkvpn.rnkutils.VkSessionManager
+import com.yellastrodev.rnkvpn.viewmodel.TunnelViewModel
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -84,6 +86,8 @@ abstract class BaseActivity : AppCompatActivity() {
         }
     }
 
+    private val viewModel: TunnelViewModel by viewModels()
+
 
     fun addOnSelectedTunnelChangedListener(listener: OnSelectedTunnelChangedListener) {
         selectionChangeRegistry.add(listener)
@@ -102,6 +106,7 @@ abstract class BaseActivity : AppCompatActivity() {
             intent != null -> intent.getStringExtra(KEY_SELECTED_TUNNEL)
             else -> null
         }
+        Application.getTunnelManager().activityViewModel = viewModel
         if (savedTunnelName != null) {
             lifecycleScope.launch {
                 val tunnel = Application.getTunnelManager().getTunnels()[savedTunnelName]
