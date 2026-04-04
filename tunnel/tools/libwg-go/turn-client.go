@@ -123,91 +123,105 @@ var (
 )
 
 func (s *stream) run(link string, peer *net.UDPAddr, udp bool, okchan chan<- struct{}, turnIp string, turnPort int, noDtls bool) {
-	for {
-		select {
-		case <-s.ctx.Done(): return
-		default:
-		}
+    const maxRetries = 150
+    retryCount := 0
 
-		err := func() error {
-			s.ready.Store(false)
-			sCtx, sCancel := context.WithCancel(s.ctx)
-			defer sCancel()
+    for {
+       select {
+       case <-s.ctx.Done(): return
+       default:
+       }
 
-			user, pass, addr, err := getVkCreds(sCtx, link)
-			if err != nil { return fmt.Errorf("VK creds failed: %w", err) }
+       // Анонимная функция занимается ТОЛЬКО попыткой подключения
+       err := func() error {
+          s.ready.Store(false)
+          sCtx, sCancel := context.WithCancel(s.ctx)
+          defer sCancel()
 
-			// Override TURN address if provided
-			if turnIp != "" {
-				_, origPort, _ := net.SplitHostPort(addr)
-				if turnPort != 0 {
-					addr = net.JoinHostPort(turnIp, fmt.Sprintf("%d", turnPort))
-				} else if origPort != "" {
-					addr = net.JoinHostPort(turnIp, origPort)
-				} else {
-					addr = turnIp
-				}
-				turnLog("[STREAM %d] Using custom TURN IP: %s", s.id, addr)
-			} else if turnPort != 0 {
-				origHost, _, _ := net.SplitHostPort(addr)
-				addr = net.JoinHostPort(origHost, fmt.Sprintf("%d", turnPort))
-				turnLog("[STREAM %d] Using custom TURN port: %s", s.id, addr)
-			}
+          user, pass, addr, err := getVkCreds(sCtx, link)
+          if err != nil {
+             errMsg := err.Error()
+             // Если ссылка протухла, помечаем ошибку спец-текстом
+             if strings.Contains(errMsg, "error_code:9000") || strings.Contains(errMsg, "Call not found") {
+                return fmt.Errorf("FATAL_VK_EXPIRED: %w", err)
+             }
+             return fmt.Errorf("VK creds failed: %w", err)
+          }
 
-			turnLog("[STREAM %d] Dialing TURN server %s...", s.id, addr)
-			dialer := &net.Dialer{Control: protectControl, Resolver: protectedResolver}
-			var turnConn net.PacketConn
-			if udp {
-				c, err := dialer.DialContext(sCtx, "udp", addr)
-				if err != nil { return fmt.Errorf("TURN UDP dial failed: %w", err) }
-				defer c.Close()
-				turnConn = &connectedUDPConn{c.(*net.UDPConn)}
-			} else {
-				c, err := dialer.DialContext(sCtx, "tcp", addr)
-				if err != nil { return fmt.Errorf("TURN TCP dial failed: %w", err) }
-				defer c.Close()
-				turnConn = turn.NewSTUNConn(c)
-			}
+          // Настройка адреса (твой оригинальный код)
+          if turnIp != "" {
+             _, origPort, _ := net.SplitHostPort(addr)
+             if turnPort != 0 {
+                addr = net.JoinHostPort(turnIp, fmt.Sprintf("%d", turnPort))
+             } else if origPort != "" {
+                addr = net.JoinHostPort(turnIp, origPort)
+             } else {
+                addr = turnIp
+             }
+          } else if turnPort != 0 {
+             origHost, _, _ := net.SplitHostPort(addr)
+             addr = net.JoinHostPort(origHost, fmt.Sprintf("%d", turnPort))
+          }
 
-			client, err := turn.NewClient(&turn.ClientConfig{
-				STUNServerAddr: addr, TURNServerAddr: addr, Username: user, Password: pass,
-				Conn: turnConn, LoggerFactory: logging.NewDefaultLoggerFactory(),
-			})
-			if err != nil { return fmt.Errorf("TURN client creation failed: %w", err) }
-			defer client.Close()
-			if err := client.Listen(); err != nil {
-				// Check if this is an authentication error (stale credentials)
-				if isAuthError(err) {
-					handleAuthError(s.id)
-				}
-				return fmt.Errorf("TURN listen failed: %w", err)
-			}
+          dialer := &net.Dialer{Control: protectControl, Resolver: protectedResolver}
+          var turnConn net.PacketConn
+          if udp {
+             c, err := dialer.DialContext(sCtx, "udp", addr)
+             if err != nil { return err }
+             defer c.Close()
+             turnConn = &connectedUDPConn{c.(*net.UDPConn)}
+          } else {
+             c, err := dialer.DialContext(sCtx, "tcp", addr)
+             if err != nil { return err }
+             defer c.Close()
+             turnConn = turn.NewSTUNConn(c)
+          }
 
-			turnLog("[STREAM %d] Requesting TURN allocation...", s.id)
-			relayConn, err := client.Allocate()
-			if err != nil {
-				// Check if this is an authentication error (stale credentials)
-				if isAuthError(err) {
-					handleAuthError(s.id)
-				}
-				return fmt.Errorf("TURN allocation failed: %w", err)
-			}
-			defer relayConn.Close()
+          client, err := turn.NewClient(&turn.ClientConfig{
+             STUNServerAddr: addr, TURNServerAddr: addr, Username: user, Password: pass,
+             Conn: turnConn, LoggerFactory: logging.NewDefaultLoggerFactory(),
+          })
+          if err != nil { return err }
+          defer client.Close()
 
-			turnLog("[STREAM %d] Allocated relay address: %s", s.id, relayConn.LocalAddr())
+          if err := client.Listen(); err != nil { return err }
 
-			// Delegate to mode-specific handler
-			if noDtls {
-				return s.runNoDTLS(sCtx, relayConn, peer, okchan)
-			}
-			return s.runDTLS(sCtx, relayConn, peer, okchan)
-		}()
+          relayConn, err := client.Allocate()
+          if err != nil { return err }
+          defer relayConn.Close()
 
-		if err != nil && s.ctx.Err() == nil {
-			turnLog("[STREAM %d] Error: %v. Reconnecting in 1s...", s.id, err)
-			time.Sleep(1 * time.Second)
-		}
-	}
+          if noDtls {
+             return s.runNoDTLS(sCtx, relayConn, peer, okchan)
+          }
+          return s.runDTLS(sCtx, relayConn, peer, okchan)
+       }() // Конец анонимной функции
+
+       // --- ЛОГИКА РЕТРАЕВ ТЕПЕРЬ ТУТ (ВНЕ ФУНКЦИИ) ---
+       if err != nil {
+          retryCount++
+
+          // 1. Если ссылка сдохла (код 9000) — выходим из run() насовсем
+          if strings.Contains(err.Error(), "FATAL_VK_EXPIRED") {
+             turnLog("[STREAM %d] ABORT: Ссылка протухла (VK 9000). Больше не пытаемся.", s.id)
+             return
+          }
+
+          // 2. Если лимит попыток исчерпан — выходим из run() насовсем
+          if retryCount >= maxRetries {
+             turnLog("[STREAM %d] ABORT: Слишком много ошибок (%d/%d). Стоп.", s.id, retryCount, maxRetries)
+             return
+          }
+
+          // 3. Если ошибка обычная — ждем 5 секунд и идем на новый круг цикла for
+          if s.ctx.Err() == nil {
+             turnLog("[STREAM %d] Error: %v. Retry %d/%d in 5s...", s.id, err, retryCount, maxRetries)
+             time.Sleep(5 * time.Second)
+          }
+       } else {
+          // Если всё прошло успешно, сбрасываем счетчик
+          retryCount = 0
+       }
+    }
 }
 
 // runNoDTLS handles packet relay without DTLS obfuscation

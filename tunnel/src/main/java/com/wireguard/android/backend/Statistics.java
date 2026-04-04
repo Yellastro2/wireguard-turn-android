@@ -12,7 +12,6 @@ import com.wireguard.util.NonNullForAll;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Objects;
 
 import androidx.annotation.Nullable;
 

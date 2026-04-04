@@ -94,6 +94,9 @@ func invalidateCredentialsCache() {
 
 // getVkCreds fetches TURN credentials from VK/OK API with caching
 func getVkCreds(ctx context.Context, link string) (string, string, string, error) {
+    turnLog("[VK Auth]] Compiled at: 15:57 (Moscow Time)")
+
+
 	credsMutex.Lock()
 	defer credsMutex.Unlock()
 
@@ -131,21 +134,25 @@ func getVkCreds(ctx context.Context, link string) (string, string, string, error
 	resp, err := doRequest(data, "https://login.vk.ru/?act=get_anonym_token")
 	if err != nil { return "", "", "", err }
 	token1 := resp["data"].(map[string]interface{})["access_token"].(string)
+    turnLog("[VK Auth]] token1 = %s", token1)
 
-	data = fmt.Sprintf("access_token=%s", token1)
-	resp, err = doRequest(data, "https://api.vk.ru/method/calls.getAnonymousAccessTokenPayload?v=5.264&client_id=6287487")
-	if err != nil { return "", "", "", err }
-	token2 := resp["response"].(map[string]interface{})["payload"].(string)
+// 	data = fmt.Sprintf("access_token=%s", token1)
+// 	resp, err = doRequest(data, "https://api.vk.ru/method/calls.getAnonymousAccessTokenPayload?v=5.274&client_id=6287487")
+// 	if err != nil { return "", "", "", err }
+// 	token2 := resp["response"].(map[string]interface{})["payload"].(string)
+//     turnLog("[VK Auth]] token2 = %s", token2)
+//
+// 	data = fmt.Sprintf("client_id=6287487&token_type=messages&payload=%s&client_secret=QbYic1K3lEV5kTGiqlq2&version=1&app_id=6287487", url.QueryEscape(token2))
+// 	resp, err = doRequest(data, "https://login.vk.ru/?act=get_anonym_token")
+// 	if err != nil { return "", "", "", err }
+// 	token3 := resp["data"].(map[string]interface{})["access_token"].(string)
+//     turnLog("[VK Auth]] token3 = %s", token3)
 
-	data = fmt.Sprintf("client_id=6287487&token_type=messages&payload=%s&client_secret=QbYic1K3lEV5kTGiqlq2&version=1&app_id=6287487", url.QueryEscape(token2))
-	resp, err = doRequest(data, "https://login.vk.ru/?act=get_anonym_token")
-	if err != nil { return "", "", "", err }
-	token3 := resp["data"].(map[string]interface{})["access_token"].(string)
-
-	data = fmt.Sprintf("vk_join_link=https://vk.com/call/join/%s&name=123&access_token=%s", url.QueryEscape(link), token3)
-	resp, err = doRequest(data, "https://api.vk.ru/method/calls.getAnonymousToken?v=5.264")
+	data = fmt.Sprintf("vk_join_link=https://vk.com/call/join/%s&name=123&access_token=%s", url.QueryEscape(link), token1)
+	resp, err = doRequest(data, "https://api.vk.ru/method/calls.getAnonymousToken?v=5.274&client_id=6287487")
 	if err != nil { return "", "", "", err }
 	token4 := resp["response"].(map[string]interface{})["token"].(string)
+    turnLog("[VK Auth]] token4 = %s", token4)
 
 	data = fmt.Sprintf("session_data=%%7B%%22version%%22%%3A2%%2C%%22device_id%%22%%3A%%22%s%%22%%2C%%22client_version%%22%%3A1.1%%2C%%22client_type%%22%%3A%%22SDK_JS%%22%%7D&method=auth.anonymLogin&format=JSON&application_key=CGMMEJLGDIHBABABA", uuid.New())
 	resp, err = doRequest(data, "https://calls.okcdn.ru/fb.do")

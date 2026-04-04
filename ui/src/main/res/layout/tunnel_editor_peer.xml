@@ -9,21 +9,21 @@
 
         <import type="android.view.View" />
 
-        <import type="com.wireguard.android.widget.KeyInputFilter" />
+        <import type="com.yellastrodev.rknvpn.widget.KeyInputFilter" />
 
-        <import type="com.wireguard.android.databinding.BindingAdapters" />
+        <import type="com.yellastrodev.rknvpn.databinding.BindingAdapters" />
 
         <variable
             name="collection"
-            type="androidx.databinding.ObservableList&lt;com.wireguard.android.viewmodel.PeerProxy&gt;" />
+            type="androidx.databinding.ObservableList&lt;com.yellastrodev.rknvpn.viewmodel.PeerProxy&gt;" />
 
         <variable
             name="item"
-            type="com.wireguard.android.viewmodel.PeerProxy" />
+            type="com.yellastrodev.rknvpn.viewmodel.PeerProxy" />
 
         <variable
             name="fragment"
-            type="com.wireguard.android.fragment.TunnelEditorFragment" />
+            type="com.yellastrodev.rknvpn.fragment.TunnelEditorFragment" />
     </data>
 
     <com.google.android.material.card.MaterialCardView
