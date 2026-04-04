@@ -65,6 +65,28 @@ abstract class BaseFragment : Fragment(), OnSelectedTunnelChangedListener {
         super.onDetach()
     }
 
+    suspend fun checkTunnelPermission(view: View): Boolean {
+        val activity = activity ?: return false
+
+        if (Application.getBackend() is GoBackend) {
+            try {
+                val intent = GoBackend.VpnService.prepare(activity)
+                if (intent != null) {
+                    permissionActivityResultLauncher.launch(intent)
+                    return false
+                }
+            } catch (e: Throwable) {
+                val message = activity.getString(R.string.error_prepare, ErrorMessages[e])
+                Snackbar.make(view, message, Snackbar.LENGTH_LONG)
+                    .setAnchorView(view.findViewById(R.id.create_fab))
+                    .show()
+                Log.e(TAG, message, e)
+                return false
+            }
+        }
+        return true
+    }
+
     fun setTunnelState(view: View, checked: Boolean) {
         val tunnel = when (val binding = DataBindingUtil.findBinding<ViewDataBinding>(view)) {
             is TunnelDetailFragmentBinding -> binding.tunnel
@@ -73,23 +95,7 @@ abstract class BaseFragment : Fragment(), OnSelectedTunnelChangedListener {
         } ?: return
         val activity = activity ?: return
         activity.lifecycleScope.launch {
-            if (Application.getBackend() is GoBackend) {
-                try {
-                    val intent = GoBackend.VpnService.prepare(activity)
-                    if (intent != null) {
-                        pendingTunnel = tunnel
-                        pendingTunnelUp = checked
-                        permissionActivityResultLauncher.launch(intent)
-                        return@launch
-                    }
-                } catch (e: Throwable) {
-                    val message = activity.getString(R.string.error_prepare, ErrorMessages[e])
-                    Snackbar.make(view, message, Snackbar.LENGTH_LONG)
-                        .setAnchorView(view.findViewById(R.id.create_fab))
-                        .show()
-                    Log.e(TAG, message, e)
-                }
-            }
+            if (!checkTunnelPermission(view)) return@launch
             setTunnelStateWithPermissionsResult(tunnel, checked)
         }
     }

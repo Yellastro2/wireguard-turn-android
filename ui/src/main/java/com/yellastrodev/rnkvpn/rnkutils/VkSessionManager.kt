@@ -191,7 +191,7 @@ class VkSessionManager(
                 null
             }
         } catch (e: Exception) {
-            Log.e(tag, "[makePostRequest] Сетевое исключение: ${e.message}")
+            Log.e(tag, "[makePostRequest] Сетевое исключение: ${e.message}", e)
             null
         }
     }
