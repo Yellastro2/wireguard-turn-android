@@ -45,51 +45,31 @@ func protectControl(network, address string, c syscall.RawConn) error {
 	})
 }
 
-var (
-	protectedResolverMu sync.RWMutex
-	protectedResolver   = createProtectedResolver()
-)
-
-func createProtectedResolver() *net.Resolver {
-	return &net.Resolver{
-		PreferGo: true,
-		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-			d := net.Dialer{Timeout: 5 * time.Second, Control: protectControl}
-			return d.DialContext(ctx, "udp", "77.88.8.8:53")
-		},
-	}
-}
-
 func init() {
 	os.Setenv("GODEBUG", "netdns=go")
 }
 
 //export wgNotifyNetworkChange
 func wgNotifyNetworkChange() {
-	// Invalidate credentials cache on network change
-	invalidateCredentialsCache()
+	// Invalidate all per-stream credentials caches on network change
+	invalidateAllCaches()
 
-	protectedResolverMu.Lock()
-	defer protectedResolverMu.Unlock()
-	protectedResolver = createProtectedResolver()
+	// Clear DNS cache
+	ClearCache()
+
 	turnHTTPClient.CloseIdleConnections()
-	turnHTTPClient.Transport = &http.Transport{
-		DialContext: (&net.Dialer{
-			Timeout: 30 * time.Second,
-			Control: protectControl,
-			Resolver: protectedResolver,
-		}).DialContext,
-		MaxIdleConns: 100,
-		IdleConnTimeout: 90 * time.Second,
-	}
-	turnLog("[NETWORK] Network change notified: resolver reset, HTTP connections cleared, credentials cache invalidated")
+	turnLog("[NETWORK] Network change notified: HTTP connections cleared, credentials cache invalidated, DNS cache cleared")
 }
 
 var turnHTTPClient = &http.Client{
 	Timeout: 20 * time.Second,
 	Transport: &http.Transport{
-		DialContext: (&net.Dialer{Timeout: 30 * time.Second, Control: protectControl, Resolver: protectedResolver}).DialContext,
-		MaxIdleConns: 100, IdleConnTimeout: 90 * time.Second,
+		DialContext: (&net.Dialer{
+			Timeout: 30 * time.Second,
+			Control: protectControl,
+		}).DialContext,
+		MaxIdleConns:    100,
+		IdleConnTimeout: 90 * time.Second,
 	},
 }
 
@@ -104,124 +84,146 @@ type stream struct {
 	cert      *tls.Certificate
 }
 
-const iPacketBuffMaxSize = 2048;
+const iPacketBuffMaxSize = 2048
 
 var packetPool = sync.Pool{
-    New: func() interface{} {
-        return make([]byte, iPacketBuffMaxSize)
-    },
+	New: func() interface{} {
+		return make([]byte, iPacketBuffMaxSize)
+	},
 }
 
 // Metrics for diagnostics
 var (
-	dtlsTxDropCount   atomic.Uint64      // Drops in DTLS TX goroutine
-	dtlsRxErrorCount  atomic.Uint64      // Errors in DTLS RX goroutine
-	relayTxErrorCount atomic.Uint64      // Errors in relay TX
-	relayRxErrorCount atomic.Uint64      // Errors in relay RX
-	noDtlsTxDropCount atomic.Uint64      // Drops in NoDTLS TX
-	noDtlsRxErrorCount atomic.Uint64     // Errors in NoDTLS RX
+	dtlsTxDropCount    atomic.Uint64 // Drops in DTLS TX goroutine
+	dtlsRxErrorCount   atomic.Uint64 // Errors in DTLS RX goroutine
+	relayTxErrorCount  atomic.Uint64 // Errors in relay TX
+	relayRxErrorCount  atomic.Uint64 // Errors in relay RX
+	noDtlsTxDropCount  atomic.Uint64 // Drops in NoDTLS TX
+	noDtlsRxErrorCount atomic.Uint64 // Errors in NoDTLS RX
 )
 
 func (s *stream) run(link string, peer *net.UDPAddr, udp bool, okchan chan<- struct{}, turnIp string, turnPort int, noDtls bool) {
-    const maxRetries = 150
-    retryCount := 0
+	const maxRetries = 150
+	retryCount := 0
 
-    for {
-       select {
-       case <-s.ctx.Done(): return
-       default:
-       }
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		default:
+		}
 
-       // Анонимная функция занимается ТОЛЬКО попыткой подключения
-       err := func() error {
-          s.ready.Store(false)
-          sCtx, sCancel := context.WithCancel(s.ctx)
-          defer sCancel()
+		// Анонимная функция занимается ТОЛЬКО попыткой подключения
+		err := func() error {
+			s.ready.Store(false)
+			sCtx, sCancel := context.WithCancel(s.ctx)
+			defer sCancel()
 
-          user, pass, addr, err := getVkCreds(sCtx, link)
-          if err != nil {
-             errMsg := err.Error()
-             // Если ссылка протухла, помечаем ошибку спец-текстом
-             if strings.Contains(errMsg, "error_code:9000") || strings.Contains(errMsg, "Call not found") {
-                return fmt.Errorf("FATAL_VK_EXPIRED: %w", err)
-             }
-             return fmt.Errorf("VK creds failed: %w", err)
-          }
+			// Передаём s.id для per-stream кэша credentials
+			user, pass, addr, err := getVkCreds(sCtx, link, s.id)
+			if err != nil {
+				errMsg := err.Error()
+				// Если ссылка протухла, помечаем ошибку спец-текстом
+				if strings.Contains(errMsg, "error_code:9000") || strings.Contains(errMsg, "Call not found") {
+					return fmt.Errorf("FATAL_VK_EXPIRED: %w", err)
+				}
+				return fmt.Errorf("VK creds failed: %w", err)
+			}
 
-          // Настройка адреса (твой оригинальный код)
-          if turnIp != "" {
-             _, origPort, _ := net.SplitHostPort(addr)
-             if turnPort != 0 {
-                addr = net.JoinHostPort(turnIp, fmt.Sprintf("%d", turnPort))
-             } else if origPort != "" {
-                addr = net.JoinHostPort(turnIp, origPort)
-             } else {
-                addr = turnIp
-             }
-          } else if turnPort != 0 {
-             origHost, _, _ := net.SplitHostPort(addr)
-             addr = net.JoinHostPort(origHost, fmt.Sprintf("%d", turnPort))
-          }
+			// Настройка адреса (оригинальный код)
+			if turnIp != "" {
+				_, origPort, _ := net.SplitHostPort(addr)
+				if turnPort != 0 {
+					addr = net.JoinHostPort(turnIp, fmt.Sprintf("%d", turnPort))
+				} else if origPort != "" {
+					addr = net.JoinHostPort(turnIp, origPort)
+				} else {
+					addr = turnIp
+				}
+			} else if turnPort != 0 {
+				origHost, _, _ := net.SplitHostPort(addr)
+				addr = net.JoinHostPort(origHost, fmt.Sprintf("%d", turnPort))
+			}
 
-          dialer := &net.Dialer{Control: protectControl, Resolver: protectedResolver}
-          var turnConn net.PacketConn
-          if udp {
-             c, err := dialer.DialContext(sCtx, "udp", addr)
-             if err != nil { return err }
-             defer c.Close()
-             turnConn = &connectedUDPConn{c.(*net.UDPConn)}
-          } else {
-             c, err := dialer.DialContext(sCtx, "tcp", addr)
-             if err != nil { return err }
-             defer c.Close()
-             turnConn = turn.NewSTUNConn(c)
-          }
+			// addr уже разрезолвлен в getVkCreds() через hostCache, Resolver не нужен
+			dialer := &net.Dialer{
+				Timeout: 30 * time.Second,
+				Control: protectControl,
+			}
+			var turnConn net.PacketConn
+			if udp {
+				c, err := dialer.DialContext(sCtx, "udp", addr)
+				if err != nil {
+					return err
+				}
+				defer c.Close()
+				turnConn = &connectedUDPConn{c.(*net.UDPConn)}
+			} else {
+				c, err := dialer.DialContext(sCtx, "tcp", addr)
+				if err != nil {
+					return err
+				}
+				defer c.Close()
+				turnConn = turn.NewSTUNConn(c)
+			}
 
-          client, err := turn.NewClient(&turn.ClientConfig{
-             STUNServerAddr: addr, TURNServerAddr: addr, Username: user, Password: pass,
-             Conn: turnConn, LoggerFactory: logging.NewDefaultLoggerFactory(),
-          })
-          if err != nil { return err }
-          defer client.Close()
+			client, err := turn.NewClient(&turn.ClientConfig{
+				STUNServerAddr: addr, TURNServerAddr: addr, Username: user, Password: pass,
+				Conn: turnConn, LoggerFactory: logging.NewDefaultLoggerFactory(),
+			})
+			if err != nil {
+				return err
+			}
+			defer client.Close()
 
-          if err := client.Listen(); err != nil { return err }
+			if err := client.Listen(); err != nil {
+				if isAuthError(err) {
+					handleAuthError(s.id)
+				}
+				return err
+			}
 
-          relayConn, err := client.Allocate()
-          if err != nil { return err }
-          defer relayConn.Close()
+			relayConn, err := client.Allocate()
+			if err != nil {
+				if isAuthError(err) {
+					handleAuthError(s.id)
+				}
+				return err
+			}
+			defer relayConn.Close()
 
-          if noDtls {
-             return s.runNoDTLS(sCtx, relayConn, peer, okchan)
-          }
-          return s.runDTLS(sCtx, relayConn, peer, okchan)
-       }() // Конец анонимной функции
+			if noDtls {
+				return s.runNoDTLS(sCtx, relayConn, peer, okchan)
+			}
+			return s.runDTLS(sCtx, relayConn, peer, okchan)
+		}() // Конец анонимной функции
 
-       // --- ЛОГИКА РЕТРАЕВ ТЕПЕРЬ ТУТ (ВНЕ ФУНКЦИИ) ---
-       if err != nil {
-          retryCount++
+		// --- ЛОГИКА РЕТРАЕВ (ВНЕ ФУНКЦИИ) ---
+		if err != nil {
+			retryCount++
 
-          // 1. Если ссылка сдохла (код 9000) — выходим из run() насовсем
-          if strings.Contains(err.Error(), "FATAL_VK_EXPIRED") {
-             turnLog("[STREAM %d] ABORT: Ссылка протухла (VK 9000). Больше не пытаемся.", s.id)
-             return
-          }
+			// 1. Если ссылка сдохла (код 9000) — выходим из run() насовсем
+			if strings.Contains(err.Error(), "FATAL_VK_EXPIRED") {
+				turnLog("[STREAM %d] ABORT: Ссылка протухла (VK 9000). Больше не пытаемся.", s.id)
+				return
+			}
 
-          // 2. Если лимит попыток исчерпан — выходим из run() насовсем
-          if retryCount >= maxRetries {
-             turnLog("[STREAM %d] ABORT: Слишком много ошибок (%d/%d). Стоп.", s.id, retryCount, maxRetries)
-             return
-          }
+			// 2. Если лимит попыток исчерпан — выходим из run() насовсем
+			if retryCount >= maxRetries {
+				turnLog("[STREAM %d] ABORT: Слишком много ошибок (%d/%d). Стоп.", s.id, retryCount, maxRetries)
+				return
+			}
 
-          // 3. Если ошибка обычная — ждем 5 секунд и идем на новый круг цикла for
-          if s.ctx.Err() == nil {
-             turnLog("[STREAM %d] Error: %v. Retry %d/%d in 5s...", s.id, err, retryCount, maxRetries)
-             time.Sleep(5 * time.Second)
-          }
-       } else {
-          // Если всё прошло успешно, сбрасываем счетчик
-          retryCount = 0
-       }
-    }
+			// 3. Обычная ошибка — ждём 5 секунд и идём на новый круг
+			if s.ctx.Err() == nil {
+				turnLog("[STREAM %d] Error: %v. Retry %d/%d in 5s...", s.id, err, retryCount, maxRetries)
+				time.Sleep(5 * time.Second)
+			}
+		} else {
+			// Если всё прошло успешно, сбрасываем счётчик
+			retryCount = 0
+		}
+	}
 }
 
 // runNoDTLS handles packet relay without DTLS obfuscation
@@ -237,15 +239,16 @@ func (s *stream) runNoDTLS(ctx context.Context, relayConn net.PacketConn, peer *
 
 	// WireGuard backend (s.in channel) -> TURN -> WireGuard server (TX)
 	go func() {
-		defer wg.Done(); defer sCancel()
+		defer wg.Done()
+		defer sCancel()
 		for {
 			select {
-			case <-sCtx.Done(): return
+			case <-sCtx.Done():
+				return
 			case b := <-s.in:
-                _, err := relayConn.WriteTo(b, peer)
-                packetPool.Put(b[:cap(b)])
-
-                if err != nil {
+				_, err := relayConn.WriteTo(b, peer)
+				packetPool.Put(b[:cap(b)])
+				if err != nil {
 					noDtlsTxDropCount.Add(1)
 					turnLog("[STREAM %d] TX error: %v", s.id, err)
 					return
@@ -256,7 +259,8 @@ func (s *stream) runNoDTLS(ctx context.Context, relayConn net.PacketConn, peer *
 
 	// WireGuard server -> TURN -> WireGuard backend (s.out socket) (RX)
 	go func() {
-		defer wg.Done(); defer sCancel()
+		defer wg.Done()
+		defer sCancel()
 		buf := make([]byte, iPacketBuffMaxSize)
 		for {
 			n, from, err := relayConn.ReadFrom(buf)
@@ -281,7 +285,10 @@ func (s *stream) runNoDTLS(ctx context.Context, relayConn net.PacketConn, peer *
 	}()
 
 	s.ready.Store(true)
-	select { case okchan <- struct{}{}: default: }
+	select {
+	case okchan <- struct{}{}:
+	default:
+	}
 
 	wg.Wait()
 	return nil
@@ -299,12 +306,15 @@ func (s *stream) runDTLS(ctx context.Context, relayConn net.PacketConn, peer *ne
 	defer c2.Close()
 
 	dtlsConn, err := dtls.Client(c1, peer, &dtls.Config{
-		Certificates: []tls.Certificate{*s.cert}, InsecureSkipVerify: true,
-		ExtendedMasterSecret: dtls.RequireExtendedMasterSecret,
-		CipherSuites: []dtls.CipherSuiteID{dtls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256},
+		Certificates:          []tls.Certificate{*s.cert},
+		InsecureSkipVerify:    true,
+		ExtendedMasterSecret:  dtls.RequireExtendedMasterSecret,
+		CipherSuites:          []dtls.CipherSuiteID{dtls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256},
 		ConnectionIDGenerator: dtls.OnlySendCIDGenerator(),
 	})
-	if err != nil { return fmt.Errorf("DTLS client creation failed: %w", err) }
+	if err != nil {
+		return fmt.Errorf("DTLS client creation failed: %w", err)
+	}
 	defer dtlsConn.Close()
 
 	wg := sync.WaitGroup{}
@@ -318,11 +328,14 @@ func (s *stream) runDTLS(ctx context.Context, relayConn net.PacketConn, peer *ne
 
 	// DTLS <-> Relay (via Pipe) - MUST start before handshake
 	go func() {
-		defer wg.Done(); defer sCancel()
+		defer wg.Done()
+		defer sCancel()
 		buf := make([]byte, iPacketBuffMaxSize)
 		for {
 			n, _, err := c2.ReadFrom(buf)
-			if err != nil { return }
+			if err != nil {
+				return
+			}
 			if _, err := relayConn.WriteTo(buf[:n], peer); err != nil {
 				relayTxErrorCount.Add(1)
 				turnLog("[STREAM %d] Relay TX error: %v", s.id, err)
@@ -332,7 +345,8 @@ func (s *stream) runDTLS(ctx context.Context, relayConn net.PacketConn, peer *ne
 	}()
 
 	go func() {
-		defer wg.Done(); defer sCancel()
+		defer wg.Done()
+		defer sCancel()
 		buf := make([]byte, iPacketBuffMaxSize)
 		for {
 			n, from, err := relayConn.ReadFrom(buf)
@@ -358,7 +372,8 @@ func (s *stream) runDTLS(ctx context.Context, relayConn net.PacketConn, peer *ne
 		defer ticker.Stop()
 		for {
 			select {
-			case <-sCtx.Done(): return
+			case <-sCtx.Done():
+				return
 			case <-ticker.C:
 				deadline := time.Now().Add(30 * time.Second)
 				relayConn.SetDeadline(deadline)
@@ -393,7 +408,10 @@ func (s *stream) runDTLS(ctx context.Context, relayConn net.PacketConn, peer *ne
 	dtlsConn.SetWriteDeadline(time.Time{})
 
 	s.ready.Store(true)
-	select { case okchan <- struct{}{}: default: }
+	select {
+	case okchan <- struct{}{}:
+	default:
+	}
 
 	var lastRx atomic.Int64
 	lastRx.Store(time.Now().Unix())
@@ -402,15 +420,16 @@ func (s *stream) runDTLS(ctx context.Context, relayConn net.PacketConn, peer *ne
 
 	// WireGuard -> DTLS (TX)
 	go func() {
-		defer wg.Done(); defer sCancel()
+		defer wg.Done()
+		defer sCancel()
 		for {
 			select {
-			case <-sCtx.Done(): return
+			case <-sCtx.Done():
+				return
 			case b := <-s.in:
-
 				// Watchdog
 				if time.Since(time.Unix(lastRx.Load(), 0)) > 30*time.Second {
-				    packetPool.Put(b[:cap(b)])
+					packetPool.Put(b[:cap(b)])
 					dtlsTxDropCount.Add(1)
 					turnLog("[STREAM %d] TX watchdog timeout", s.id)
 					return
@@ -430,7 +449,8 @@ func (s *stream) runDTLS(ctx context.Context, relayConn net.PacketConn, peer *ne
 
 	// DTLS -> WireGuard (RX)
 	go func() {
-		defer wg.Done(); defer sCancel()
+		defer wg.Done()
+		defer sCancel()
 		buf := make([]byte, iPacketBuffMaxSize)
 		for {
 			n, err := dtlsConn.Read(buf)
@@ -456,6 +476,7 @@ func (s *stream) runDTLS(ctx context.Context, relayConn net.PacketConn, peer *ne
 
 var currentTurnCancel context.CancelFunc
 var turnMutex sync.Mutex
+
 //export wgTurnProxyStart
 func wgTurnProxyStart(peerAddrC *C.char, vklinkC *C.char, n int, udp int, listenAddrC *C.char, turnIpC *C.char, turnPortC int, noDtlsC int, networkHandleC C.longlong) int32 {
 	// Force initialization of resolver and HTTP client with current environment
@@ -469,22 +490,59 @@ func wgTurnProxyStart(peerAddrC *C.char, vklinkC *C.char, n int, udp int, listen
 	noDtls := noDtlsC != 0
 	networkHandle := int64(networkHandleC)
 
-	//turnLog("[PROXY] Hub starting on %s (peer=%s, streams=%d, turnIp=%s, turnPort=%d, noDtls=%v)", listenAddr, peerAddr, n, turnIp, turnPort, noDtls)
 	turnLog("[PROXY] Hub starting on %s (streams=%d, noDtls=%v, networkHandle=%d)", listenAddr, n, noDtls, networkHandle)
+
 	turnMutex.Lock()
-	if currentTurnCancel != nil { currentTurnCancel() }
+	if currentTurnCancel != nil {
+		currentTurnCancel()
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	currentTurnCancel = cancel
 	turnMutex.Unlock()
 
-	peer, err := net.ResolveUDPAddr("udp", peerAddr)
-	if err != nil { return -1 }
+	// Resolve peerAddr via hostCache (if it's a domain)
+	var peer *net.UDPAddr
+	host, port, err := net.SplitHostPort(peerAddr)
+	if err == nil {
+		if ip := net.ParseIP(host); ip == nil {
+			// It's a domain name, resolve it
+			resolvedIP, err := hostCache.Resolve(context.Background(), host)
+			if err != nil {
+				turnLog("[DNS] Warning: failed to resolve peer: %v, using original", err)
+				peer, err = net.ResolveUDPAddr("udp", peerAddr)
+				if err != nil {
+					return -1
+				}
+			} else {
+				peerAddr = net.JoinHostPort(resolvedIP, port)
+				peer, err = net.ResolveUDPAddr("udp", peerAddr)
+				if err != nil {
+					return -1
+				}
+			}
+		} else {
+			peer, err = net.ResolveUDPAddr("udp", peerAddr)
+			if err != nil {
+				return -1
+			}
+		}
+	} else {
+		peer, err = net.ResolveUDPAddr("udp", peerAddr)
+		if err != nil {
+			return -1
+		}
+	}
+
 	parts := strings.Split(vklink, "join/")
 	link := parts[len(parts)-1]
-	if idx := strings.IndexAny(link, "/?#"); idx != -1 { link = link[:idx] }
+	if idx := strings.IndexAny(link, "/?#"); idx != -1 {
+		link = link[:idx]
+	}
 
 	lc, err := net.ListenPacket("udp", listenAddr)
-	if err != nil { return -1 }
+	if err != nil {
+		return -1
+	}
 	context.AfterFunc(ctx, func() { lc.Close() })
 
 	// Generate fresh Session ID for every run to avoid server-side conflicts
@@ -511,29 +569,29 @@ func wgTurnProxyStart(peerAddrC *C.char, vklinkC *C.char, n int, udp int, listen
 		var lastUsed int = 0
 
 		for {
-		    b := packetPool.Get().([]byte)[:iPacketBuffMaxSize]
+			b := packetPool.Get().([]byte)[:iPacketBuffMaxSize]
 			nRead, addr, err := lc.ReadFrom(b)
 			if err != nil {
-			    packetPool.Put(b[:cap(b)])
-			    return
+				packetPool.Put(b[:cap(b)])
+				return
 			}
 
 			// Round-Robin selection
 			lastUsed = (lastUsed + 1) % nStreams
 
-            var s *stream
-            for i := 0; i < nStreams; i++ {
-            	st := streams[(lastUsed+i)%nStreams]
-            	if st.ready.Load() {
-            		s = st
-            		break
-            	}
-            }
+			var s *stream
+			for i := 0; i < nStreams; i++ {
+				st := streams[(lastUsed+i)%nStreams]
+				if st.ready.Load() {
+					s = st
+					break
+				}
+			}
 
-            if s == nil {
-                packetPool.Put(b[:cap(b)])
-            	continue
-            }
+			if s == nil {
+				packetPool.Put(b[:cap(b)])
+				continue
+			}
 
 			returnAddr := addr
 			s.peer.Store(&returnAddr)
@@ -542,7 +600,7 @@ func wgTurnProxyStart(peerAddrC *C.char, vklinkC *C.char, n int, udp int, listen
 			case s.in <- b[:nRead]:
 				// Packet queued successfully
 			default:
-                packetPool.Put(b[:cap(b)])
+				packetPool.Put(b[:cap(b)])
 			}
 		}
 	}()
@@ -569,5 +627,6 @@ func wgTurnProxyStop() {
 	}
 }
 
-type connectedUDPConn struct { *net.UDPConn }
+type connectedUDPConn struct{ *net.UDPConn }
+
 func (c *connectedUDPConn) WriteTo(p []byte, _ net.Addr) (int, error) { return c.Write(p) }

@@ -23,8 +23,8 @@ android {
         applicationId = pkg
         minSdk = 24
         targetSdk = 36
-        versionCode = providers.gradleProperty("wireguardVersionCode").get().toInt()
-        versionName = providers.gradleProperty("wireguardVersionName").get()
+        versionCode = 1
+        versionName = "0.1"
         buildConfigField("int", "MIN_SDK_VERSION", minSdk.toString())
         ndk {
             abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a"))

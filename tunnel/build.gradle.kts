@@ -58,6 +58,7 @@ android {
         disable += "LongLogTag"
         disable += "NewApi"
     }
+    ndkVersion = "27.0.12077973"
     publishing {
         singleVariant("release") {
             withJavadocJar()
