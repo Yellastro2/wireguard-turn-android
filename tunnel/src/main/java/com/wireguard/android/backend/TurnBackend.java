@@ -58,6 +58,9 @@ public final class TurnBackend {
         } else {
             // Service destroyed - reset everything for next cycle
             Log.d(TAG, "VpnService destroyed, resetting future and latch");
+
+            wgTurnProxyStop();
+
             wgSetVpnService(null);
             vpnServiceFutureRef.set(new CompletableFuture<>());
             vpnServiceLatchRef.set(new CountDownLatch(1));  // Recreate latch for next launch

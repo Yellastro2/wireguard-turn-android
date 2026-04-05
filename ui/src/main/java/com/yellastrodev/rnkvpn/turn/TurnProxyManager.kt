@@ -237,8 +237,14 @@ class TurnProxyManager(private val context: Context) {
             // Reset VpnService reference
             TurnBackend.onVpnServiceCreated(null)
 
+            // 1. СИГНАЛ СТОПА В NDK МГНОВЕННО (вне мьютекса)
+            // Это должно прервать зависший wgTurnProxyStart внутри NDK
+            Log.d(TAG, "[stopForTunnel] Emergency stop signal to NDK...")
+            TurnBackend.wgTurnProxyStop()
+
             operationMutex.lock()
             try {
+                Log.d(TAG, "[stopForTunnel] inmutex lock() stop signal to NDK...")
                 val instance = instances[tunnelName] ?: return@withContext
                 TurnBackend.wgTurnProxyStop()
                 instance.running = false

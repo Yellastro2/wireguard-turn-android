@@ -125,7 +125,9 @@ class RNKHomeFragment : BaseFragment() {
                 confirmText = "Указать полномочия",
                 isNoTunnelMode = true
             )
-        } else if (tunnel.state == Tunnel.State.DOWN) {
+//        } else if (tunnel.state == Tunnel.State.DOWN) {
+        } else if (viewModel.state.value == ViewTunnelState.Idle) {
+
             // Если VPN выключен (Защита включена), показываем стандартный ворнинг
             showWarningDialog(
                 title = "ВНИМАНИЕ",

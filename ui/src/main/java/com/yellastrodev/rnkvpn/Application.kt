@@ -81,7 +81,8 @@ class Application : android.app.Application() {
         }
         if (backend == null) {
             backend = GoBackend(applicationContext)
-            GoBackend.setAlwaysOnCallback { get().applicationScope.launch { get().tunnelManager.restoreState(true) } }
+            // При перезапуске приложения пытается снова открыть последний открытый тунель, даже если он небыл успешен
+//            GoBackend.setAlwaysOnCallback { get().applicationScope.launch { get().tunnelManager.restoreState(true) } }
         }
         return backend
     }

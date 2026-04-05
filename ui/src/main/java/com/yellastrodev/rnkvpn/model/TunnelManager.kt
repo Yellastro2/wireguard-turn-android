@@ -32,12 +32,14 @@ import com.yellastrodev.rnkvpn.viewmodel.TunnelViewModel
 import com.yellastrodev.rnkvpn.viewmodel.ViewTunnelState
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.isActive
 
 class TunnelVkLinkException(message: String) : Exception(message)
 
@@ -54,6 +56,9 @@ class TunnelManager(
     private val tunnelMap: ObservableSortedKeyedArrayList<String, ObservableTunnel> = ObservableSortedKeyedArrayList(TunnelComparator)
     private var haveLoaded = false
 
+    // Храним ссылку на текущую активную задачу по смене состояния туннеля
+    private var stateChangeJob: kotlinx.coroutines.Job? = null
+    private var lastTargetState: Tunnel.State? = null
     private fun addToList(name: String, config: Config?, state: Tunnel.State): ObservableTunnel {
         val tunnel = ObservableTunnel(this, name, config, state)
         var turnSettings = turnSettingsStore.load(name)
@@ -160,7 +165,8 @@ class TunnelManager(
             if (lastUsedName != null)
                 lastUsedTunnel = tunnelMap[lastUsedName]
             haveLoaded = true
-            restoreState(true)
+            // При перезапуске приложения пытается снова открыть последний открытый тунель, даже если он небыл успешен
+//            restoreState(true)
             tunnels.complete(tunnelMap)
         }
     }
@@ -267,6 +273,27 @@ class TunnelManager(
 
     suspend fun setTunnelState(tunnel: ObservableTunnel, state: Tunnel.State): Tunnel.State = withContext(Dispatchers.Main.immediate) {
         Log.d(TAG, "[setTunnelState] Setting state of ${tunnel.name} to $state")
+
+        // 1. Улучшенная логика управления задачами:
+        // Если мы уже пытаемся перейти в это состояние, и задача активна — просто ждем её
+        if (stateChangeJob?.isActive == true && state == lastTargetState) {
+            Log.d(TAG, "[setTunnelState] Already moving towards $state, ignoring redundant request")
+            return@withContext tunnel.state
+        }
+
+        // Если мы в процессе выключения (DOWN), не даем новым кликам "DOWN" отменить этот процесс
+        if (state == Tunnel.State.DOWN && lastTargetState == Tunnel.State.DOWN && stateChangeJob?.isActive == true) {
+            Log.d(TAG, "[setTunnelState] Already stopping, ignoring repeat DOWN")
+            return@withContext tunnel.state
+        }
+
+        // Отменяем ПРЕДЫДУЩУЮ задачу, если она была (например, отменяем старт при нажатии стоп)
+        stateChangeJob?.cancel()
+        lastTargetState = state
+
+        // Сохраняем ссылку на текущий Job корутины
+        stateChangeJob = coroutineContext[Job]
+
         if (state == tunnel.state) return@withContext state
         
         // If we are already UP and someone (like AlwaysOnCallback) requests UP again,
@@ -282,6 +309,8 @@ class TunnelManager(
         var newState = tunnel.state
         var throwable: Throwable? = null
         try {
+            if (!coroutineContext.isActive) return@withContext tunnel.state
+
             var configToUse = tunnel.getConfigAsync()
             if (state == Tunnel.State.UP) {
                 Log.d(TAG, "[setTunnelState] Поднятие тунеля")
@@ -298,9 +327,23 @@ class TunnelManager(
                     }
                 }
             }
-            newState = withContext(Dispatchers.IO) { getBackend().setState(tunnel, state, configToUse) }
+            val backend = getBackend()
+            // Затем запускаем блокирующую операцию с возможностью прерывания
+            newState = kotlinx.coroutines.runInterruptible(Dispatchers.IO) {
+                backend.setState(tunnel, state, configToUse)
+            }
+//            newState = withContext(Dispatchers.IO) { getBackend().setState(tunnel, state, configToUse) }
 
             Log.d(TAG, "[setTunnelState] новый стейт: ${newState.name}")
+
+            // 2. КРИТИЧЕСКАЯ ТОЧКА: Проверяем, не отменили ли нас, пока WG поднимался
+            if (!coroutineContext.isActive) {
+                Log.d(TAG, "[setTunnelState] Задача отменена после поднятия WG. Гасим всё.")
+                if (newState == Tunnel.State.UP) {
+                    withContext(Dispatchers.IO) { getBackend().setState(tunnel, Tunnel.State.DOWN, null) }
+                }
+                return@withContext Tunnel.State.DOWN
+            }
 
             // NEW: Start TURN AFTER tunnel is established
             // This ensures VpnService.protect() will work for TURN sockets
@@ -324,7 +367,7 @@ class TunnelManager(
                     Log.w(TAG, "[setTunnelState] TURN not enabled for tunnel ${tunnel.name}, skipping")
                 }
             }
-            Log.w(TAG, "[setTunnelState] Тунель поднят и соединен!")
+            Log.w(TAG, "[setTunnelState] Тунель ${tunnel.name} изменен стейт на ${newState.name}!")
             activityViewModel?. let {
                 it.updateState(ViewTunnelState.Active)
             }
@@ -332,11 +375,19 @@ class TunnelManager(
             if (newState == Tunnel.State.UP) {
                 lastUsedTunnel = tunnel
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            Log.d(TAG, "[setTunnelState] Job for ${tunnel.name} was cancelled while going to $state")
+            // При отмене не вызываем onStateChanged(newState), чтобы UI не "прыгал"
+            throw e
         } catch (e: Throwable) {
             throwable = e
         }
-        tunnel.onStateChanged(newState)
-        saveState()
+        // 3. Обновляем состояние в UI только если корутина не была отменена.
+        // Это предотвращает "отскок" статуса в UP, если мы нажали DOWN и задача была прервана.
+        if (coroutineContext.isActive) {
+            tunnel.onStateChanged(newState)
+            saveState()
+        }
         if (throwable != null)
             throw throwable
         newState

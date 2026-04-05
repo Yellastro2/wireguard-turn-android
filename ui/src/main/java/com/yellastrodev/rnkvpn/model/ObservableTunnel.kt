@@ -63,6 +63,7 @@ class ObservableTunnel internal constructor(
     }
 
     suspend fun setStateAsync(state: Tunnel.State): Tunnel.State = withContext(Dispatchers.Main.immediate) {
+        Log.d(TAG, "[setStateAsync] Setting state of ${this@ObservableTunnel.name} to $state")
         if (state != this@ObservableTunnel.state)
             manager.setTunnelState(this@ObservableTunnel, state)
         else
