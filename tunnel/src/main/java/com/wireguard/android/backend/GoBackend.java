@@ -5,8 +5,14 @@
 
 package com.wireguard.android.backend;
 
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.ParcelFileDescriptor;
 import android.system.OsConstants;
@@ -25,6 +31,7 @@ import com.wireguard.util.NonNullForAll;
 
 import java.net.InetAddress;
 import java.util.Collections;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -33,6 +40,7 @@ import java.util.concurrent.TimeoutException;
 
 import androidx.annotation.Nullable;
 import androidx.collection.ArraySet;
+import androidx.core.app.NotificationCompat;
 
 /**
  * Implementation of {@link Backend} that uses the wireguard-go userspace implementation to provide
@@ -300,8 +308,84 @@ public final class GoBackend implements Backend {
             for (final String excludedApplication : config.getInterface().getExcludedApplications())
                 builder.addDisallowedApplication(excludedApplication);
 
-            for (final String includedApplication : config.getInterface().getIncludedApplications())
-                builder.addAllowedApplication(includedApplication);
+            // Добавить сюда:
+            final List<String> hardcodedExclusions = List.of(
+                    "ais.artek",
+                    "com.allgoritm.youla",
+                    "com.BOGG.ART.VKT",
+                    "com.gnivts.ausn",
+                    "com.gnivts.selfemployed",
+                    "com.hintsolutions.donor",
+                    "com.my.mygamesapp",
+                    "com.octopod.russianpost.client.android",
+                    "com.uma.musicvk",
+                    "com.uip.gosuslugi2",
+                    "com.vk.admin",
+                    "com.vk.calls",
+                    "com.vk.clips",
+                    "com.vk.im",
+                    "com.vk.love",
+                    "com.vk.mail",
+                    "com.vk.tv",
+                    "com.vk.vkvideo",
+                    "com.vkontakte.android",
+                    "games.my.cloud",
+                    "games.my.cloud.tv",
+                    "io.citizens.security",
+                    "live.vkplay.app",
+                    "ru.altarix.mos.pgu",
+                    "ru.csarm.sreda",
+                    "ru.fanid",
+                    "ru.fgis.mobile",
+                    "ru.finassist",
+                    "ru.fns.billchecker.mobile.android",
+                    "ru.fns.lkfl",
+                    "ru.fns.mysign",
+                    "ru.gnivc.lkip",
+                    "ru.gosuslugi.auto",
+                    "ru.gosuslugi.culture",
+                    "ru.gosuslugi.goskey",
+                    "ru.gosuslugi.migrant",
+                    "ru.gosuslugi.pos",
+                    "ru.integrics.kirovschool",
+                    "ru.integrics.mobiled",
+                    "ru.mail.biz.avocado",
+                    "ru.mail.cloud",
+                    "ru.mail.horo.android",
+                    "ru.mail.mailapp",
+                    "ru.mail.my",
+                    "ru.mail.search.electroscope",
+                    "ru.mos.app",
+                    "ru.mos.ed",
+                    "ru.mos.ourcity",
+                    "ru.mos.polls",
+                    "ru.mosreg.uslugi.mobile.beta",
+                    "ru.netvoxlab.mydocapp",
+                    "ru.ok.android",
+                    "ru.oneme.app",
+                    "ru.pkd.gosuslugi",
+                    "ru.rosreestr.mobile",
+                    "ru.rostel",
+                    "ru.rtlabs.mobile.ebs.gosuslugi.android",
+                    "ru.sigma.gisgkh",
+                    "ru.sitesoft.fssp",
+                    "ru.trudvsem.mobile",
+                    "ru.vk.hrtek",
+                    "ru.zen.android",
+                    "team.rtds.checkcontrol"
+            );
+            for (final String app : hardcodedExclusions) {
+                try {
+                    builder.addDisallowedApplication(app);
+                    Log.i(TAG, "[setStateInternal] Application " + app + " excluded");
+                } catch (final PackageManager.NameNotFoundException e) {
+                    // Приложение не установлено — пропускаем молча
+                    Log.i(TAG, "[setStateInternal] Application " + app + " not found");
+                }
+            }
+
+//            for (final String includedApplication : config.getInterface().getIncludedApplications())
+//                builder.addAllowedApplication(includedApplication);
 
             for (final InetNetwork addr : config.getInterface().getAddresses())
                 builder.addAddress(addr.getAddress(), addr.getMask());
@@ -387,6 +471,12 @@ public final class GoBackend implements Backend {
     public static class VpnService extends android.net.VpnService {
         @Nullable private GoBackend owner;
 
+        // Константы
+        public static final String ACTION_STOP_VPN = "com.yellastrodev.STOP_VPN";
+        private static final int NOTIFICATION_ID = 101;
+        private static final String CHANNEL_ID = "vpn_status_channel";
+        private static final String TAG = "VpnService";
+
         public Builder getBuilder() {
             return new Builder();
         }
@@ -394,22 +484,97 @@ public final class GoBackend implements Backend {
         @Override
         public void onCreate() {
             Log.d(TAG, "VpnService.onCreate() called");
-            // CORRECT ORDER: First register in TurnBackend (JNI), then complete Future
-            // This ensures JNI is ready before TurnProxyManager gets the Future
-            Log.d(TAG, "Calling TurnBackend.onVpnServiceCreated()...");
             TurnBackend.onVpnServiceCreated(this);
-            Log.d(TAG, "TurnBackend.onVpnServiceCreated() complete");
-
-            Log.d(TAG, "Calling vpnService.complete()...");
             vpnService.complete(this);
-            Log.d(TAG, "vpnService.complete() complete");
-
             super.onCreate();
         }
 
         @Override
         public void onDestroy() {
-            // Unregister from TurnBackend
+            stopVpnLogic(); // Убираем уведомление и чистим хвосты
+            super.onDestroy();
+        }
+
+        @Override
+        public int onStartCommand(@Nullable final Intent intent, final int flags, final int startId) {
+            // 1. Проверка на команду остановки
+            if (intent != null && ACTION_STOP_VPN.equals(intent.getAction())) {
+                Log.d(TAG, "Stop action received");
+                stopVpnLogic();
+                stopSelf();
+                return START_NOT_STICKY;
+            }
+
+            // 2. Показ уведомления (обязательно для Foreground)
+            showStatusNotification("RKN VPN", "Защита активна");
+
+            // Твоя существующая логика
+            vpnService.complete(this);
+            if (intent == null || intent.getComponent() == null || !intent.getComponent().getPackageName().equals(getPackageName())) {
+                Log.d(TAG, "Service started by Always-on VPN feature");
+                if (alwaysOnCallback != null)
+                    alwaysOnCallback.alwaysOnTriggered();
+            }
+            return START_STICKY;
+        }
+
+        /**
+         * Показывает несмахиваемое уведомление с кнопкой "Отключить"
+         */
+        private void showStatusNotification(String title, String message) {
+            NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+
+            // Канал для Android 8.0+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                NotificationChannel channel = new NotificationChannel(
+                        CHANNEL_ID, "VPN Status", NotificationManager.IMPORTANCE_LOW);
+                channel.setShowBadge(false);
+                nm.createNotificationChannel(channel);
+            }
+
+            // Интент для кнопки "Отключить"
+            Intent stopIntent = new Intent(this, VpnService.class);
+            stopIntent.setAction(ACTION_STOP_VPN);
+
+            int flags = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
+                    ? PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT
+                    : PendingIntent.FLAG_UPDATE_CURRENT;
+
+            PendingIntent stopPendingIntent = PendingIntent.getService(this, 0, stopIntent, flags);
+
+            // Интент для клика по уведомлению (открыть приложение)
+            PendingIntent contentPendingIntent = PendingIntent.getActivity(
+                    this, 0, getPackageManager().getLaunchIntentForPackage(getPackageName()), flags);
+
+            Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
+                    .setSmallIcon(android.R.drawable.ic_lock_idle_lock)
+                    .setContentTitle(title)
+                    .setContentText(message)
+                    .setOngoing(true)
+                    .setPriority(NotificationCompat.PRIORITY_LOW)
+                    .setShowWhen(false)
+                    .setContentIntent(contentPendingIntent)
+                    .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Отключить", stopPendingIntent)
+                    .build();
+
+            // Запуск Foreground с учетом API 34+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+            } else {
+                startForeground(NOTIFICATION_ID, notification);
+            }
+        }
+
+        /**
+         * Общая логика очистки при выключении
+         */
+        private void stopVpnLogic() {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(STOP_FOREGROUND_REMOVE);
+            } else {
+                stopForeground(true);
+            }
+
             TurnBackend.onVpnServiceCreated(null);
             if (owner != null) {
                 final Tunnel tunnel = owner.currentTunnel;
@@ -422,25 +587,12 @@ public final class GoBackend implements Backend {
                     tunnel.onStateChange(State.DOWN);
                 }
             }
-            // Reset GoBackend future for next cycle
+
+            // Сброс Future
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
                 vpnService = vpnService.newIncompleteFuture();
             else
                 vpnService = new CompletableFuture<>();
-            super.onDestroy();
-        }
-
-        @Override
-        public int onStartCommand(@Nullable final Intent intent, final int flags, final int startId) {
-            // Also complete on start command for robustness
-            vpnService.complete(this);
-            // Note: TurnBackend.onVpnServiceCreated() is called in onCreate(), no need to call again here
-            if (intent == null || intent.getComponent() == null || !intent.getComponent().getPackageName().equals(getPackageName())) {
-                Log.d(TAG, "Service started by Always-on VPN feature");
-                if (alwaysOnCallback != null)
-                    alwaysOnCallback.alwaysOnTriggered();
-            }
-            return super.onStartCommand(intent, flags, startId);
         }
 
         public void setOwner(final GoBackend owner) {

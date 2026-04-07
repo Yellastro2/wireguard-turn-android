@@ -89,8 +89,9 @@ class TunnelListAdapter(
             GlobalScope.launch {
                 val address = tunnel.getConfigAsync().`interface`.addresses.firstOrNull().toString()
                 withContext(Dispatchers.Main) {
-                    tvNodeIp.text = address
+                    tvNodeIp.text = tunnel.turnSettings?.peer
                 }
+                tunnel.turnSettings?.peer
             }
 
             // Регион — пока заглушка (можно потом вытащить из имени или добавить поле)
