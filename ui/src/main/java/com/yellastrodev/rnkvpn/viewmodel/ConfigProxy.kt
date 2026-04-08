@@ -10,7 +10,7 @@ import android.os.Parcelable
 import androidx.core.os.ParcelCompat
 import androidx.databinding.ObservableArrayList
 import androidx.databinding.ObservableList
-import com.yellastrodev.rknvpn.turn.TurnSettings
+import com.yellastrodev.rnkvpn.turn.TurnSettings
 import com.wireguard.config.BadConfigException
 import com.wireguard.config.Config
 import com.wireguard.config.Peer

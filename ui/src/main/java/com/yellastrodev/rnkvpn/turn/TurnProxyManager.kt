@@ -2,19 +2,15 @@
  * Copyright © 2026.
  * SPDX-License-Identifier: Apache-2.0
  */
-package com.yellastrodev.rknvpn.turn
+package com.yellastrodev.rnkvpn.turn
 
 import android.content.Context
-import android.net.ConnectivityManager
 import android.net.Network
-import android.net.NetworkCapabilities
-import android.net.NetworkRequest
 import android.util.Log
 import com.wireguard.android.backend.TurnBackend
 import com.wireguard.android.turn.PhysicalNetworkMonitor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -22,7 +18,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.flow.collectLatest
-import java.net.Inet4Address
 
 /**
  * Lightweight manager for per-tunnel TURN client processes and logs.
@@ -36,6 +31,7 @@ class TurnProxyManager(private val context: Context) {
     // State
     private var activeTunnelName: String? = null
     private var activeSettings: TurnSettings? = null
+    private var activeModeOverride: String? = null
     @Volatile private var userInitiatedStop: Boolean = false
     
     // Network tracking
@@ -100,7 +96,7 @@ class TurnProxyManager(private val context: Context) {
             attempts++
             Log.d(TAG, "Starting TURN for $name (Attempt $attempts)")
             
-            val success = startForTunnelInternal(name, settings)
+            val success = startForTunnelInternal(name, settings, activeModeOverride)
             if (success) {
                 Log.d(TAG, "TURN restarted successfully on attempt $attempts")
                 return // Exit loop on success
@@ -129,13 +125,19 @@ class TurnProxyManager(private val context: Context) {
 
     /**
      * Called from TurnManager when the tunnel is established.
+     * @param modeOverride optional mode to use instead of the one in turnSettings
      */
-    suspend fun onTunnelEstablished(tunnelName: String, turnSettings: TurnSettings?): Boolean {
-        Log.d(TAG, "onTunnelEstablished called for tunnel: $tunnelName")
+    suspend fun onTunnelEstablished(
+        tunnelName: String,
+        turnSettings: TurnSettings?,
+        modeOverride: String? = null
+    ): Boolean {
+        Log.d(TAG, "onTunnelEstablished called for tunnel: $tunnelName, modeOverride: $modeOverride")
 
         // Reset state for new session
         activeTunnelName = tunnelName
         activeSettings = turnSettings
+        activeModeOverride = modeOverride
         userInitiatedStop = false
         
         // Initialize network baseline for the new session
@@ -147,7 +149,7 @@ class TurnProxyManager(private val context: Context) {
             return true
         }
 
-        val success = startForTunnelInternal(tunnelName, turnSettings)
+        val success = startForTunnelInternal(tunnelName, turnSettings, modeOverride)
 
         // After initial start, allow network changes to trigger restarts
         // We delay slightly to ensure we don't catch the immediate network fluctuation caused by VPN itself
@@ -159,11 +161,15 @@ class TurnProxyManager(private val context: Context) {
         return success
     }
 
-    suspend fun startForTunnel(tunnelName: String, settings: TurnSettings): Boolean {
-        return startForTunnelInternal(tunnelName, settings)
+    suspend fun startForTunnel(tunnelName: String, settings: TurnSettings, mode: String? = null): Boolean {
+        return startForTunnelInternal(tunnelName, settings, mode)
     }
     
-    private suspend fun startForTunnelInternal(tunnelName: String, settings: TurnSettings): Boolean =
+    private suspend fun startForTunnelInternal(
+        tunnelName: String,
+        settings: TurnSettings,
+        modeOverride: String? = null
+    ): Boolean =
         withContext(Dispatchers.IO) {
             operationMutex.lock()
             try {
@@ -197,10 +203,14 @@ class TurnProxyManager(private val context: Context) {
                 }
 
                 val networkHandle = lastKnownNetwork?.getNetworkHandle() ?: 0L
-                Log.d(TAG, "Starting TURN proxy for $tunnelName with network: $lastKnownNetwork (handle=$networkHandle)")
+                val modeToUse = modeOverride ?: settings.mode
+                Log.d(TAG, "Starting TURN proxy for $tunnelName with network: $lastKnownNetwork (handle=$networkHandle), mode=$modeToUse")
                 
                 val ret = TurnBackend.wgTurnProxyStart(
-                    settings.peer, settings.vkLink, settings.streams,
+                    settings.peer,
+                    settings.vkLink,
+                    modeToUse,
+                    settings.streams,
                     if (settings.useUdp) 1 else 0,
                     "127.0.0.1:${settings.localPort}",
                     settings.turnIp,
@@ -212,12 +222,12 @@ class TurnProxyManager(private val context: Context) {
                 val listenAddr = "127.0.0.1:${settings.localPort}"
                 if (ret == 0) {
                     instance.running = true
-                    val msg = "TURN started for tunnel \"$tunnelName\" listening on $listenAddr"
+                    val msg = "TURN started for tunnel \"$tunnelName\" listening on $listenAddr (mode=$modeToUse)"
                     Log.d(TAG, msg)
                     appendLogLine(tunnelName, msg)
                     true
                 } else {
-                    val msg = "Failed to start TURN proxy (error $ret)" // -1 вернул невалидный вклинк.. и все остальные
+                    val msg = "Failed to start TURN proxy (error $ret)"
                     Log.e(TAG, msg)
                     appendLogLine(tunnelName, msg)
                     false
@@ -232,6 +242,7 @@ class TurnProxyManager(private val context: Context) {
             userInitiatedStop = true
             activeTunnelName = null
             activeSettings = null
+            activeModeOverride = null
             lastKnownNetwork = null
             
             // Reset VpnService reference

@@ -6,6 +6,7 @@ package com.yellastrodev.rknvpn.turn
 
 import android.content.Context
 import android.util.Log
+import com.yellastrodev.rnkvpn.turn.TurnSettings
 import org.json.JSONObject
 import java.io.File
 import java.io.FileInputStream
@@ -32,6 +33,7 @@ class TurnSettingsStore(private val context: Context) {
                 val json = JSONObject(String(bytes, StandardCharsets.UTF_8))
                 TurnSettings(
                     enabled = json.optBoolean("enabled", false),
+                    mode = json.optString("mode", "vk"),
                     peer = json.optString("peer", ""),
                     vkLink = json.optString("vkLink", ""),
                     streams = json.optInt("streams", 4),
@@ -59,6 +61,7 @@ class TurnSettingsStore(private val context: Context) {
 
         val json = JSONObject()
             .put("enabled", settings.enabled)
+            .put("mode", settings.mode)
             .put("peer", settings.peer)
             .put("vkLink", settings.vkLink)
             .put("streams", settings.streams)
@@ -97,4 +100,3 @@ class TurnSettingsStore(private val context: Context) {
         private const val TAG = "WireGuard/TurnSettingsStore"
     }
 }
-

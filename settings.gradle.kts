@@ -16,7 +16,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "wireguard-android"
+rootProject.name = "RKN-Turn-VPN"
 
 include(":tunnel")
 include(":ui")

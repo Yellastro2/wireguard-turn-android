@@ -102,6 +102,9 @@ var (
 	noDtlsRxErrorCount atomic.Uint64 // Errors in NoDTLS RX
 )
 
+// Global credentials function — set by wgTurnProxyStart based on mode
+var globalGetCreds getCredsFunc
+
 func (s *stream) run(link string, peer *net.UDPAddr, udp bool, okchan chan<- struct{}, turnIp string, turnPort int, noDtls bool) {
 	const maxRetries = 150
 	retryCount := 0
@@ -113,24 +116,25 @@ func (s *stream) run(link string, peer *net.UDPAddr, udp bool, okchan chan<- str
 		default:
 		}
 
-		// Анонимная функция занимается ТОЛЬКО попыткой подключения
 		err := func() error {
 			s.ready.Store(false)
 			sCtx, sCancel := context.WithCancel(s.ctx)
 			defer sCancel()
 
-			// Передаём s.id для per-stream кэша credentials
-			user, pass, addr, err := getVkCreds(sCtx, link, s.id)
+			if globalGetCreds == nil {
+				return fmt.Errorf("credentials function not initialized")
+			}
+			user, pass, addr, err := globalGetCreds(sCtx, link, s.id)
 			if err != nil {
 				errMsg := err.Error()
 				// Если ссылка протухла, помечаем ошибку спец-текстом
 				if strings.Contains(errMsg, "error_code:9000") || strings.Contains(errMsg, "Call not found") {
 					return fmt.Errorf("FATAL_VK_EXPIRED: %w", err)
 				}
-				return fmt.Errorf("VK creds failed: %w", err)
+				return fmt.Errorf("creds failed: %w", err)
 			}
 
-			// Настройка адреса (оригинальный код)
+			// Настройка адреса
 			if turnIp != "" {
 				_, origPort, _ := net.SplitHostPort(addr)
 				if turnPort != 0 {
@@ -145,7 +149,7 @@ func (s *stream) run(link string, peer *net.UDPAddr, udp bool, okchan chan<- str
 				addr = net.JoinHostPort(origHost, fmt.Sprintf("%d", turnPort))
 			}
 
-			// addr уже разрезолвлен в getVkCreds() через hostCache, Resolver не нужен
+			// addr уже разрезолвлен в getCredsCached() через hostCache
 			dialer := &net.Dialer{
 				Timeout: 30 * time.Second,
 				Control: protectControl,
@@ -196,19 +200,19 @@ func (s *stream) run(link string, peer *net.UDPAddr, udp bool, okchan chan<- str
 				return s.runNoDTLS(sCtx, relayConn, peer, okchan)
 			}
 			return s.runDTLS(sCtx, relayConn, peer, okchan)
-		}() // Конец анонимной функции
+		}()
 
-		// --- ЛОГИКА РЕТРАЕВ (ВНЕ ФУНКЦИИ) ---
+		// --- ЛОГИКА РЕТРАЕВ ---
 		if err != nil {
 			retryCount++
 
-			// 1. Если ссылка сдохла (код 9000) — выходим из run() насовсем
+			// 1. Если ссылка протухла (код 9000) — выходим насовсем
 			if strings.Contains(err.Error(), "FATAL_VK_EXPIRED") {
 				turnLog("[STREAM %d] ABORT: Ссылка протухла (VK 9000). Больше не пытаемся.", s.id)
 				return
 			}
 
-			// 2. Если лимит попыток исчерпан — выходим из run() насовсем
+			// 2. Если лимит попыток исчерпан — выходим насовсем
 			if retryCount >= maxRetries {
 				turnLog("[STREAM %d] ABORT: Слишком много ошибок (%d/%d). Стоп.", s.id, retryCount, maxRetries)
 				return
@@ -220,7 +224,7 @@ func (s *stream) run(link string, peer *net.UDPAddr, udp bool, okchan chan<- str
 				time.Sleep(5 * time.Second)
 			}
 		} else {
-			// Если всё прошло успешно, сбрасываем счётчик
+			// Успех — сбрасываем счётчик
 			retryCount = 0
 		}
 	}
@@ -478,19 +482,20 @@ var currentTurnCancel context.CancelFunc
 var turnMutex sync.Mutex
 
 //export wgTurnProxyStart
-func wgTurnProxyStart(peerAddrC *C.char, vklinkC *C.char, n int, udp int, listenAddrC *C.char, turnIpC *C.char, turnPortC int, noDtlsC int, networkHandleC C.longlong) int32 {
+func wgTurnProxyStart(peerAddrC *C.char, vklinkC *C.char, modeC *C.char, n int, udp int, listenAddrC *C.char, turnIpC *C.char, turnPortC int, noDtlsC int, networkHandleC C.longlong) int32 {
 	// Force initialization of resolver and HTTP client with current environment
 	wgNotifyNetworkChange()
 
 	peerAddr := C.GoString(peerAddrC)
 	vklink := C.GoString(vklinkC)
+	mode := C.GoString(modeC)
 	listenAddr := C.GoString(listenAddrC)
 	turnIp := C.GoString(turnIpC)
 	turnPort := int(turnPortC)
 	noDtls := noDtlsC != 0
 	networkHandle := int64(networkHandleC)
 
-	turnLog("[PROXY] Hub starting on %s (streams=%d, noDtls=%v, networkHandle=%d)", listenAddr, n, noDtls, networkHandle)
+	turnLog("[PROXY] Hub starting on %s (streams=%d, mode=%s, noDtls=%v, networkHandle=%d)", listenAddr, n, mode, noDtls, networkHandle)
 
 	turnMutex.Lock()
 	if currentTurnCancel != nil {
@@ -499,6 +504,19 @@ func wgTurnProxyStart(peerAddrC *C.char, vklinkC *C.char, n int, udp int, listen
 	ctx, cancel := context.WithCancel(context.Background())
 	currentTurnCancel = cancel
 	turnMutex.Unlock()
+
+	// Setup credentials function based on mode
+	if mode == "wb" {
+		turnLog("[PROXY] Using WB credential mode")
+		globalGetCreds = func(ctx context.Context, link string, streamID int) (string, string, string, error) {
+			return getCredsCached(ctx, link, streamID, wbFetch)
+		}
+	} else {
+		turnLog("[PROXY] Using VK Link credential mode")
+		globalGetCreds = func(ctx context.Context, link string, streamID int) (string, string, string, error) {
+			return getCredsCached(ctx, link, streamID, fetchVkCreds)
+		}
+	}
 
 	// Resolve peerAddr via hostCache (if it's a domain)
 	var peer *net.UDPAddr
@@ -533,10 +551,17 @@ func wgTurnProxyStart(peerAddrC *C.char, vklinkC *C.char, n int, udp int, listen
 		}
 	}
 
-	parts := strings.Split(vklink, "join/")
-	link := parts[len(parts)-1]
-	if idx := strings.IndexAny(link, "/?#"); idx != -1 {
-		link = link[:idx]
+	// Determine link for credential caching
+	// For WB mode the link key is just "wb" (no VK join link needed)
+	var link string
+	if mode == "wb" {
+		link = "wb"
+	} else {
+		parts := strings.Split(vklink, "join/")
+		link = parts[len(parts)-1]
+		if idx := strings.IndexAny(link, "/?#"); idx != -1 {
+			link = link[:idx]
+		}
 	}
 
 	lc, err := net.ListenPacket("udp", listenAddr)

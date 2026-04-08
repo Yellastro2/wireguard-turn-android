@@ -22,7 +22,7 @@ import com.wireguard.android.backend.Tunnel
 import com.yellastrodev.rknvpn.configStore.ConfigStore
 import com.yellastrodev.rknvpn.databinding.ObservableSortedKeyedArrayList
 import com.yellastrodev.rknvpn.turn.TurnConfigProcessor
-import com.yellastrodev.rknvpn.turn.TurnSettings
+import com.yellastrodev.rnkvpn.turn.TurnSettings
 import com.yellastrodev.rknvpn.turn.TurnSettingsStore
 import com.yellastrodev.rknvpn.util.ErrorMessages
 import com.yellastrodev.rknvpn.util.UserKnobs

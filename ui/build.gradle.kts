@@ -24,7 +24,7 @@ android {
         minSdk = 24
         targetSdk = 36
         versionCode = 2
-        versionName = "0.1.2"
+        versionName = "0.1.4_kim_turn"
         buildConfigField("int", "MIN_SDK_VERSION", minSdk.toString())
         ndk {
             abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a"))

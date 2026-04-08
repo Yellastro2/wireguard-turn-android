@@ -33,11 +33,6 @@ data class OkSession(
     var lastUsed: Long = System.currentTimeMillis()
 )
 
-interface SessionStorage {
-    fun saveKeys(keys: List<OkSession>)
-    fun loadKeys(): List<OkSession>
-}
-
 /**
  * Менеджер сессий без внешних зависимостей.
  * @param authToken Твой секретный ключ

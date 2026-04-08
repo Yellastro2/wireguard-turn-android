@@ -61,7 +61,7 @@ const (
 	cacheSafetyMargin  = 60 * time.Second
 	maxCacheErrors     = 3
 	errorWindow        = 10 * time.Second
-	streamsPerCache    = 4                 // Number of streams sharing one credentials cache
+	streamsPerCache    = 4 // Number of streams sharing one credentials cache
 )
 
 // getCacheID returns the shared cache ID for a given stream ID
@@ -132,7 +132,7 @@ func handleAuthError(streamID int) bool {
 	now := time.Now().Unix()
 
 	// Reset counter if enough time has passed
-	if now - cache.lastErrorTime.Load() > int64(errorWindow.Seconds()) {
+	if now-cache.lastErrorTime.Load() > int64(errorWindow.Seconds()) {
 		cache.errorCount.Store(0)
 	}
 
@@ -174,8 +174,23 @@ func invalidateAllCaches() {
 	turnLog("[VK Auth] All shared caches cleared (streams per cache: %d)", streamsPerCache)
 }
 
-// getVkCreds fetches TURN credentials from VK/OK API with shared caching
-func getVkCreds(ctx context.Context, link string, streamID int) (string, string, string, error) {
+// fetchFunc is the signature for credential retrieval functions (without cache logic)
+type fetchFunc func(ctx context.Context, link string) (string, string, string, error)
+
+// fetchMu serializes credential fetching to avoid API rate limiting
+var fetchMu sync.Mutex
+
+// serializeFetch wraps a fetch call with the global fetchMu to avoid API rate limiting
+func serializeFetch(ctx context.Context, link string, storeFn fetchFunc) (string, string, string, error) {
+	fetchMu.Lock()
+	defer fetchMu.Unlock()
+	return storeFn(ctx, link)
+}
+
+// getCredsCached checks cache before fetching credentials.
+// This is the general entry point for credential retrieval with caching.
+// Works for any credential provider (VK, WB, etc.) via the fetchFunc parameter.
+func getCredsCached(ctx context.Context, link string, streamID int, storeFn fetchFunc) (string, string, string, error) {
 	cache := getStreamCache(streamID)
 	cacheID := getCacheID(streamID)
 
@@ -185,11 +200,11 @@ func getVkCreds(ctx context.Context, link string, streamID int) (string, string,
 	// Check cache — another stream may have populated it while waiting
 	if cache.creds.Link == link && time.Now().Before(cache.creds.ExpiresAt) {
 		expires := time.Until(cache.creds.ExpiresAt)
-		turnLog("[STREAM %d] [VK Auth] Using cached credentials (cache=%d, expires in %v)", streamID, cacheID, expires)
+		turnLog("[Auth] Using cached credentials (cache=%d, expires in %v)", cacheID, expires)
 		return cache.creds.Username, cache.creds.Password, cache.creds.ServerAddr, nil
 	}
 
-	turnLog("[STREAM %d] [VK Auth] Cache miss (cache=%d), starting credential fetch...", streamID, cacheID)
+	turnLog("[Auth] Cache miss (cache=%d), starting credential fetch...", cacheID)
 
 	// Check context before long fetch
 	select {
@@ -198,8 +213,8 @@ func getVkCreds(ctx context.Context, link string, streamID int) (string, string,
 	default:
 	}
 
-	// Fetch credentials with rate limiting
-	user, pass, addr, err := fetchVkCredsSerialized(ctx, link, streamID)
+	// Fetch credentials with global mutex to avoid API rate limiting
+	user, pass, addr, err := serializeFetch(ctx, link, storeFn)
 	if err != nil {
 		return "", "", "", err
 	}
@@ -213,21 +228,23 @@ func getVkCreds(ctx context.Context, link string, streamID int) (string, string,
 		Link:       link,
 	}
 
-	turnLog("[STREAM %d] [VK Auth] Success! Credentials cached until %v (cache=%d)", streamID, cache.creds.ExpiresAt, cacheID)
+	turnLog("[Auth] Success! Credentials cached until %v (cache=%d)", cache.creds.ExpiresAt, cacheID)
 	return user, pass, addr, nil
 }
 
-// fetchVkCredsSerialized wraps fetchVkCreds with rate limiting to avoid VK flood control
-func fetchVkCredsSerialized(ctx context.Context, link string, streamID int) (string, string, string, error) {
+// getCredsFunc is the signature for credential retrieval functions (with cache + streamID)
+type getCredsFunc func(context.Context, string, int) (string, string, string, error)
+
+// fetchVkCreds is the fetchFunc-compatible wrapper for VK credential fetching.
+// It serializes requests and tries all VK credential pairs.
+func fetchVkCreds(ctx context.Context, link string) (string, string, string, error) {
 	vkRequestMu.Lock()
 	defer vkRequestMu.Unlock()
-
-	user, pass, addr, err := fetchVkCreds(ctx, link, streamID)
-	return user, pass, addr, err
+	return fetchVkCredsInternal(ctx, link, 0)
 }
 
-// fetchVkCreds performs the actual VK/OK API calls to fetch credentials
-func fetchVkCreds(ctx context.Context, link string, streamID int) (string, string, string, error) {
+// fetchVkCredsInternal performs the actual VK/OK API calls to fetch credentials
+func fetchVkCredsInternal(ctx context.Context, link string, streamID int) (string, string, string, error) {
 	var lastErr error
 
 	// Try each credentials pair until success
@@ -375,19 +392,19 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 	// Token 1 → getCallPreview
 	vkDelayRandom(100, 200)
 
-    // getCallPreview - emulate browser behavior (HAR entry 189)
+	// getCallPreview - emulate browser behavior (HAR entry 189)
 	data = fmt.Sprintf("vk_join_link=https://vk.ru/call/join/%s&fields=photo_200&access_token=%s", url.QueryEscape(link), token1)
 	resp, err = doRequest(data, "https://api.vk.ru/method/calls.getCallPreview?v=5.275&client_id="+creds.ClientID)
 	if err != nil {
 		turnLog("[STREAM %d] [VK Auth] getCallPreview request failed: %v", streamID, err)
 	} else {
-	    turnLog("[STREAM %d] [VK Auth] getCallPreview completed (optional)", streamID)
-    }
+		turnLog("[STREAM %d] [VK Auth] getCallPreview completed (optional)", streamID)
+	}
 
 	// getCallPreview → Token 2
 	vkDelayRandom(500, 1000)
 
-    // Token 2 (getAnonymousToken)
+	// Token 2 (getAnonymousToken)
 	data = fmt.Sprintf("vk_join_link=https://vk.ru/call/join/%s&name=123&access_token=%s", url.QueryEscape(link), token1)
 	urlAddr := fmt.Sprintf("https://api.vk.ru/method/calls.getAnonymousToken?v=5.275&client_id=%s", creds.ClientID)
 	resp, err = doRequest(data, urlAddr)
@@ -465,7 +482,7 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 	// Token 2 → Token 3
 	vkDelayRandom(100, 200)
 
-    // Token 3 (auth.anonymLogin - independent request, doesn't need token2)
+	// Token 3 (auth.anonymLogin - independent request, doesn't need token2)
 	sessionData := fmt.Sprintf(`{"version":2,"device_id":"%s","client_version":1.1,"client_type":"SDK_JS"}`, uuid.New())
 	data = fmt.Sprintf("session_data=%s&method=auth.anonymLogin&format=JSON&application_key=CGMMEJLGDIHBABABA", url.QueryEscape(sessionData))
 	resp, err = doRequest(data, "https://calls.okcdn.ru/fb.do")
@@ -493,7 +510,7 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 	// Token 3 → Token 4
 	vkDelayRandom(100, 200)
 
-    // Token 4 (vchat.joinConversationByLink → TURN credentials)
+	// Token 4 (vchat.joinConversationByLink → TURN credentials)
 	data = fmt.Sprintf("joinLink=%s&isVideo=false&protocolVersion=5&capabilities=2F7F&anonymToken=%s&method=vchat.joinConversationByLink&format=JSON&application_key=CGMMEJLGDIHBABABA&session_key=%s", url.QueryEscape(link), token2, token3)
 	resp, err = doRequest(data, "https://calls.okcdn.ru/fb.do")
 	if err != nil {

@@ -2,7 +2,7 @@
  * Copyright © 2026.
  * SPDX-License-Identifier: Apache-2.0
  */
-package com.yellastrodev.rknvpn.turn
+package com.yellastrodev.rnkvpn.turn
 
 import java.util.Locale
 
@@ -11,6 +11,7 @@ import java.util.Locale
  */
 data class TurnSettings(
     val enabled: Boolean = false,
+    val mode: String = "vk",
     val peer: String = "",
     val vkLink: String = "",
     val streams: Int = 4,
@@ -25,6 +26,7 @@ data class TurnSettings(
             "",
             "# [Peer] TURN extensions",
             "#@wgt:EnableTURN = $enabled",
+            "#@wgt:Mode = $mode",
             "#@wgt:UseUDP = $useUdp",
             "#@wgt:IPPort = $peer",
             "#@wgt:VKLink = $vkLink",
@@ -40,6 +42,7 @@ data class TurnSettings(
     companion object {
         fun fromComments(comments: List<String>): TurnSettings? {
             var enabled = false
+            var mode = "vk"
             var peer = ""
             var vkLink = ""
             var streams = 4
@@ -60,6 +63,7 @@ data class TurnSettings(
 
                 when (key) {
                     "enableturn" -> enabled = value.toBoolean()
+                    "mode" -> mode = value
                     "useudp" -> useUdp = value.toBoolean()
                     "ipport" -> peer = value
                     "vklink" -> vkLink = value
@@ -70,7 +74,7 @@ data class TurnSettings(
                     "nodtls" -> noDtls = value.toBoolean()
                 }
             }
-            return if (foundAny) TurnSettings(enabled, peer, vkLink, streams, useUdp, localPort, turnIp, turnPort, noDtls) else null
+            return if (foundAny) TurnSettings(enabled, mode, peer, vkLink, streams, useUdp, localPort, turnIp, turnPort, noDtls) else null
         }
 
         fun validate(settings: TurnSettings): TurnSettings {

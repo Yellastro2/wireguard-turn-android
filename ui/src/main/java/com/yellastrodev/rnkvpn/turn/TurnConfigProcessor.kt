@@ -6,6 +6,7 @@ package com.yellastrodev.rknvpn.turn
 
 import com.wireguard.config.Config
 import com.wireguard.config.Peer
+import com.yellastrodev.rnkvpn.turn.TurnSettings
 import java.util.ArrayList
 
 /**

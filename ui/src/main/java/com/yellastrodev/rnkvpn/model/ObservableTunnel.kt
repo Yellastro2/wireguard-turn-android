@@ -11,7 +11,7 @@ import com.yellastrodev.rknvpn.BR
 import com.wireguard.android.backend.Statistics
 import com.wireguard.android.backend.Tunnel
 import com.yellastrodev.rknvpn.databinding.Keyed
-import com.yellastrodev.rknvpn.turn.TurnSettings
+import com.yellastrodev.rnkvpn.turn.TurnSettings
 import com.yellastrodev.rknvpn.util.applicationScope
 import com.wireguard.config.Config
 import kotlinx.coroutines.Dispatchers

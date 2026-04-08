@@ -74,9 +74,14 @@ abstract class BaseActivity : AppCompatActivity() {
     }
 
     fun setVkLink(link: String, tunnel: ObservableTunnel) {
+        Log.d("BaseActivity", "setVkLink: $link")
         if (tunnel.turnSettings == null || tunnel.config == null) return
         val configProxy = ConfigProxy(tunnel.config!!, tunnel.turnSettings)
-        if (link != configProxy.turn.vkLink) {
+        
+        // Хардкодим режим "wb", как просил пользователь
+        configProxy.turn.mode = "wb"
+        
+        if (link != configProxy.turn.vkLink || configProxy.turn.mode != tunnel.turnSettings?.mode) {
             configProxy.turn.vkLink = link
             val config = configProxy.resolve()
             val turnSettings = configProxy.resolveTurnSettings()

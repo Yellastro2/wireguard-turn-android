@@ -23,12 +23,12 @@ import com.wireguard.android.backend.GoBackend
 import com.wireguard.android.backend.WgQuickBackend
 import com.yellastrodev.rknvpn.configStore.FileConfigStore
 import com.yellastrodev.rknvpn.model.TunnelManager
-import com.yellastrodev.rknvpn.turn.TurnProxyManager
 import com.yellastrodev.rknvpn.turn.TurnSettingsStore
 import com.wireguard.android.util.RootShell
 import com.wireguard.android.util.ToolsInstaller
 import com.yellastrodev.rknvpn.util.UserKnobs
 import com.yellastrodev.rknvpn.util.applicationScope
+import com.yellastrodev.rnkvpn.turn.TurnProxyManager
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers

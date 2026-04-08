@@ -94,9 +94,25 @@ public final class TurnBackend {
 
     public static native void wgSetVpnService(@Nullable VpnService service);
 
+    /**
+     * Starts the TURN proxy.
+     *
+     * @param peerAddr    WireGuard server address (ip:port)
+     * @param vklink      VK call join link (ignored in WB mode, pass empty string)
+     * @param mode        Credential mode: "vk" or "wb"
+     * @param n           Number of parallel streams
+     * @param useUdp      1 = UDP transport to TURN, 0 = TCP
+     * @param listenAddr  Local UDP listen address (e.g. "127.0.0.1:51820")
+     * @param turnIp      Override TURN server IP (empty string = use from credentials)
+     * @param turnPort    Override TURN server port (0 = use from credentials)
+     * @param noDtls      1 = no DTLS obfuscation (direct relay), 0 = DTLS
+     * @param networkHandle Android network handle for socket binding
+     * @return 0 on success, -1 on failure
+     */
     public static native int wgTurnProxyStart(
             String peerAddr,
             String vklink,
+            String mode,
             int n,
             int useUdp,
             String listenAddr,

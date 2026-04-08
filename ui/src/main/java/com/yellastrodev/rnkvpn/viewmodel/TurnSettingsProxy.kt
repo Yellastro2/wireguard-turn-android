@@ -9,7 +9,7 @@ import android.os.Parcelable
 import androidx.databinding.BaseObservable
 import androidx.databinding.Bindable
 import com.yellastrodev.rknvpn.BR
-import com.yellastrodev.rknvpn.turn.TurnSettings
+import com.yellastrodev.rnkvpn.turn.TurnSettings
 import com.wireguard.config.BadConfigException
 
 class TurnSettingsProxy : BaseObservable, Parcelable {
@@ -18,6 +18,13 @@ class TurnSettingsProxy : BaseObservable, Parcelable {
         set(value) {
             field = value
             notifyPropertyChanged(BR.enabled)
+        }
+
+    @get:Bindable
+    var mode: String = "vk"
+        set(value) {
+            field = value
+            notifyPropertyChanged(BR.mode)
         }
 
     @get:Bindable
@@ -85,6 +92,7 @@ class TurnSettingsProxy : BaseObservable, Parcelable {
 
     private constructor(parcel: Parcel) {
         enabled = parcel.readInt() != 0
+        mode = parcel.readString() ?: "vk"
         peer = parcel.readString() ?: ""
         vkLink = parcel.readString() ?: ""
         streams = parcel.readString() ?: ""
@@ -101,6 +109,7 @@ class TurnSettingsProxy : BaseObservable, Parcelable {
     constructor(other: TurnSettings?) {
         if (other != null) {
             enabled = other.enabled
+            mode = other.mode
             peer = other.peer
             vkLink = other.vkLink
             streams = other.streams.toString()
@@ -116,6 +125,7 @@ class TurnSettingsProxy : BaseObservable, Parcelable {
 
     override fun writeToParcel(dest: Parcel, flags: Int) {
         dest.writeInt(if (enabled) 1 else 0)
+        dest.writeString(mode)
         dest.writeString(peer)
         dest.writeString(vkLink)
         dest.writeString(streams)
@@ -159,6 +169,7 @@ class TurnSettingsProxy : BaseObservable, Parcelable {
 
         val settings = TurnSettings(
             enabled = enabled,
+            mode = mode,
             peer = peer.trim(),
             vkLink = vkLink.trim(),
             streams = parsedStreams,
