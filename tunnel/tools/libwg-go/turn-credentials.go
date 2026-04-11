@@ -57,11 +57,12 @@ type StreamCredentialsCache struct {
 }
 
 const (
-	credentialLifetime = 10 * time.Minute
-	cacheSafetyMargin  = 60 * time.Second
-	maxCacheErrors     = 3
-	errorWindow        = 10 * time.Second
-	streamsPerCache    = 4 // Number of streams sharing one credentials cache
+	credentialLifetime   = 10 * time.Minute // VK: креды живут долго
+	wbCredentialLifetime = 2 * time.Minute  // WB: гостевая сессия короткая, обновляем часто
+	cacheSafetyMargin    = 60 * time.Second
+	maxCacheErrors       = 3
+	errorWindow          = 10 * time.Second
+	streamsPerCache      = 4 // Number of streams sharing one credentials cache
 )
 
 // getCacheID returns the shared cache ID for a given stream ID
@@ -117,6 +118,8 @@ func getStreamCache(streamID int) *StreamCredentialsCache {
 func isAuthError(err error) bool {
 	errStr := err.Error()
 	return strings.Contains(errStr, "401") ||
+		strings.Contains(errStr, "403") ||         // WB: IP Forbidden — креды протухли
+		strings.Contains(errStr, "Forbidden") ||   // WB: IP Forbidden текстом
 		strings.Contains(errStr, "Unauthorized") ||
 		strings.Contains(errStr, "authentication") ||
 		strings.Contains(errStr, "invalid credential") ||
@@ -219,16 +222,23 @@ func getCredsCached(ctx context.Context, link string, streamID int, storeFn fetc
 		return "", "", "", err
 	}
 
+	// WB гостевые сессии живут ~2-3 минуты, используем короткий lifetime
+	// чтобы не долбить сервер протухшими кредами и не получать 403
+	lifetime := credentialLifetime
+	if link == "wb" {
+		lifetime = wbCredentialLifetime
+	}
+
 	// Store in cache
 	cache.creds = TurnCredentials{
 		Username:   user,
 		Password:   pass,
 		ServerAddr: addr,
-		ExpiresAt:  time.Now().Add(credentialLifetime - cacheSafetyMargin),
+		ExpiresAt:  time.Now().Add(lifetime - cacheSafetyMargin),
 		Link:       link,
 	}
 
-	turnLog("[Auth] Success! Credentials cached until %v (cache=%d)", cache.creds.ExpiresAt, cacheID)
+	turnLog("[Auth] Success! Credentials cached until %v (cache=%d, lifetime=%v)", cache.creds.ExpiresAt, cacheID, lifetime)
 	return user, pass, addr, nil
 }
 

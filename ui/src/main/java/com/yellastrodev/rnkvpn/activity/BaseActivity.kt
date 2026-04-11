@@ -79,7 +79,7 @@ abstract class BaseActivity : AppCompatActivity() {
         val configProxy = ConfigProxy(tunnel.config!!, tunnel.turnSettings)
         
         // Хардкодим режим "wb", как просил пользователь
-        configProxy.turn.mode = "wb"
+        configProxy.turn.mode = "vk"
         
         if (link != configProxy.turn.vkLink || configProxy.turn.mode != tunnel.turnSettings?.mode) {
             configProxy.turn.vkLink = link

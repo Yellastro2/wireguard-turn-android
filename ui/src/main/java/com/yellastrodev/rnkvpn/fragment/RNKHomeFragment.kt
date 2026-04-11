@@ -197,34 +197,34 @@ class RNKHomeFragment : BaseFragment() {
 
         selectedTunnel?.let { tunnel ->
             requireActivity().lifecycleScope.launch(Dispatchers.IO) {
-//                if (citizennKey?.startsWith("$") == true) {
-//                    Log.d("RNKHomeFragment", "ключ доступа есть, делаем новую ссылку")
-//                    Snackbar.make(requireView(), "СОГЛАСОВАНИЕ ОСОБЫХ ПОЛНОМОЧИЙ", Snackbar.LENGTH_LONG).show()
-//                    val linkSuccess = (requireActivity() as BaseActivity).vkSessionManager.getLinkSmarter(citizennKey!!).let { result ->
-//                        when (result) {
-//                            is CallResult.Success -> {
-//                                (requireActivity() as BaseActivity).setVkLink(result.url, tunnel)
-//                                return@let true //
-//                            }
-//
-//                            is CallResult.AuthExpired -> {
-//                                Snackbar.make(requireView(), "ОШИБКА СОГЛАСОВАНИЯ ОСОБЫХ ПОЛНОМОЧИЙ ПРОВЕРЬТЕ СВОЙ КЛЮЧ ГРАЖДАНИНА", Snackbar.LENGTH_LONG)
-//                                    .show()
-//
-//                                return@let false
-//                            }
-//
-//                            is CallResult.Error -> {
-//                                Snackbar.make(requireView(), "НЕПРЕДВИДЕННАЯ ОШИБКА СОГЛАСОВАНИЯ ПОЛНОМОЧИЙ: ${result.message}", Snackbar.LENGTH_LONG)
-//                                    .show()
-//                                return@let false
-//                            }
-//                        }
-//                    }
-//
-//                    if (!linkSuccess)
-//                        return@launch
-//                }
+                if (citizennKey?.startsWith("$") == true) {
+                    Log.d("RNKHomeFragment", "ключ доступа есть, делаем новую ссылку")
+                    Snackbar.make(requireView(), "СОГЛАСОВАНИЕ ОСОБЫХ ПОЛНОМОЧИЙ", Snackbar.LENGTH_LONG).show()
+                    val linkSuccess = (requireActivity() as BaseActivity).vkSessionManager.getLinkSmarter(citizennKey!!).let { result ->
+                        when (result) {
+                            is CallResult.Success -> {
+                                (requireActivity() as BaseActivity).setVkLink(result.url, tunnel)
+                                return@let true //
+                            }
+
+                            is CallResult.AuthExpired -> {
+                                Snackbar.make(requireView(), "ОШИБКА СОГЛАСОВАНИЯ ОСОБЫХ ПОЛНОМОЧИЙ ПРОВЕРЬТЕ СВОЙ КЛЮЧ ГРАЖДАНИНА", Snackbar.LENGTH_LONG)
+                                    .show()
+
+                                return@let false
+                            }
+
+                            is CallResult.Error -> {
+                                Snackbar.make(requireView(), "НЕПРЕДВИДЕННАЯ ОШИБКА СОГЛАСОВАНИЯ ПОЛНОМОЧИЙ: ${result.message}", Snackbar.LENGTH_LONG)
+                                    .show()
+                                return@let false
+                            }
+                        }
+                    }
+
+                    if (!linkSuccess)
+                        return@launch
+                }
                 setTunnelState(tunnel, Tunnel.State.UP)
             }
         }
