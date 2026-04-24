@@ -18,6 +18,7 @@ import com.yellastrodev.rknvpn.Application
 import com.yellastrodev.rknvpn.R
 import com.yellastrodev.rknvpn.activity.BaseActivity
 import com.yellastrodev.rknvpn.activity.BaseActivity.OnSelectedTunnelChangedListener
+import com.yellastrodev.rnkvpn.rnkutils.CallJoinSource
 import com.wireguard.android.backend.GoBackend
 import com.wireguard.android.backend.Tunnel
 import com.yellastrodev.rknvpn.databinding.TunnelDetailFragmentBinding
@@ -53,6 +54,12 @@ abstract class BaseFragment : Fragment(), OnSelectedTunnelChangedListener {
         protected set(key) {
             (activity as? BaseActivity)?.citizennKey = key
         }
+
+    /**
+     * currentCallJoinSource exposes the structured call source stored by the parent activity.
+     */
+    protected val currentCallJoinSource: CallJoinSource?
+        get() = (activity as? BaseActivity)?.currentCallJoinSource
 
 
     override fun onAttach(context: Context) {

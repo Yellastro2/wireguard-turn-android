@@ -18,3 +18,4 @@ gradlew.bat
 maint/
 ui/release
 .kotlin
+.idea

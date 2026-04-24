@@ -211,7 +211,7 @@ class RNKHomeFragment : BaseFragment() {
 
         selectedTunnel?.let { tunnel ->
             requireActivity().lifecycleScope.launch(Dispatchers.IO) {
-                if (citizennKey?.startsWith("$") == true) {
+                if (false) { // Legacy launch path disabled after call source refactor.
                     Log.d("RNKHomeFragment", "ключ доступа есть, делаем новую ссылку")
                     Snackbar.make(requireView(), "СОГЛАСОВАНИЕ ОСОБЫХ ПОЛНОМОЧИЙ", Snackbar.LENGTH_LONG).show()
                     val linkSuccess = (requireActivity() as BaseActivity).vkSessionManager.getLinkSmarter(citizennKey!!).let { result ->
@@ -239,6 +239,24 @@ class RNKHomeFragment : BaseFragment() {
                     if (!linkSuccess)
                         return@launch
                 }
+                val launchResult = (requireActivity() as BaseActivity).resolveVkLinkForLaunch(tunnel)
+                when (launchResult) {
+                    is CallResult.Success -> {
+                        Log.d("RNKHomeFragment", "[activateTunnel] Ссылка для запуска туннеля готова")
+                    }
+                    is CallResult.AuthExpired -> {
+                        Snackbar.make(requireView(), "ОШИБКА СОГЛАСОВАНИЯ ОСОБЫХ ПОЛНОМОЧИЙ ПРОВЕРЬТЕ СВОЙ КЛЮЧ ГРАЖДАНИНА", Snackbar.LENGTH_LONG).show()
+                        return@launch
+                    }
+                    is CallResult.Error -> {
+                        Snackbar.make(requireView(), "НЕПРЕДВИДЕННАЯ ОШИБКА СОГЛАСОВАНИЯ ПОЛНОМОЧИЙ: ${launchResult.message}", Snackbar.LENGTH_LONG).show()
+                        return@launch
+                    }
+                    null -> {
+                        Log.d("RNKHomeFragment", "[activateTunnel] Источник звонка не задан, используем текущее значение в туннеле")
+                    }
+                }
+
                 setTunnelState(tunnel, Tunnel.State.UP)
             }
         }
@@ -253,7 +271,7 @@ class RNKHomeFragment : BaseFragment() {
                 tunnel.setStateAsync(state)
 
             } catch (e: TunnelVkLinkException) {
-                if (citizennKey?.startsWith("http") == true)
+                if (currentCallJoinSource?.type == com.yellastrodev.rnkvpn.rnkutils.CallJoinSource.Type.LINK)
                     Snackbar.make(requireView(), "ОШИБКА ОТКЛЮЧЕНИЯ ОБНОВИТЕ КЛЮЧ ГРАЖДАНИНА", Snackbar.LENGTH_LONG).show()
                 else {
                     Log.w("RNKHomeFragment", "Ошибка открытия туннеля, обновим внутренние полномочия..", e)
