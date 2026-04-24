@@ -96,8 +96,8 @@ class TurnProxyManager(private val context: Context) {
             attempts++
             Log.d(TAG, "Starting TURN for $name (Attempt $attempts)")
             
-            val success = startForTunnelInternal(name, settings, activeModeOverride)
-            if (success) {
+            val result = startForTunnelInternal(name, settings, activeModeOverride)
+            if (result.isSuccess) {
                 Log.d(TAG, "TURN restarted successfully on attempt $attempts")
                 return // Exit loop on success
             }
@@ -118,6 +118,17 @@ class TurnProxyManager(private val context: Context) {
         @Volatile var running: Boolean = false,
     )
 
+    /**
+     * TurnStartResult describes how the native TURN startup attempt finished.
+     */
+    data class TurnStartResult(val code: Int) {
+        val isSuccess: Boolean
+            get() = code == TurnBackend.WG_TURN_PROXY_SUCCESS
+
+        val isVkLinkExpired: Boolean
+            get() = code == TurnBackend.WG_TURN_PROXY_ERROR_VK_LINK_EXPIRED
+    }
+
     private val instances = ConcurrentHashMap<String, Instance>()
     // Mutex to serialize start/stop operations and prevent race conditions between
     // onTunnelEstablished and handleNetworkChange
@@ -131,7 +142,7 @@ class TurnProxyManager(private val context: Context) {
         tunnelName: String,
         turnSettings: TurnSettings?,
         modeOverride: String? = null
-    ): Boolean {
+    ): TurnStartResult {
         Log.d(TAG, "onTunnelEstablished called for tunnel: $tunnelName, modeOverride: $modeOverride")
 
         // Reset state for new session
@@ -146,22 +157,22 @@ class TurnProxyManager(private val context: Context) {
 
         if (turnSettings == null || !turnSettings.enabled) {
             Log.d(TAG, "TURN not enabled, skipping")
-            return true
+            return TurnStartResult(TurnBackend.WG_TURN_PROXY_SUCCESS)
         }
 
-        val success = startForTunnelInternal(tunnelName, turnSettings, modeOverride)
+        val result = startForTunnelInternal(tunnelName, turnSettings, modeOverride)
 
         // After initial start, allow network changes to trigger restarts
         // We delay slightly to ensure we don't catch the immediate network fluctuation caused by VPN itself
         scope.launch {
             delay(2000)
-            Log.d(TAG, "Initialization phase complete, network monitoring active: $success")
+            Log.d(TAG, "Initialization phase complete, network monitoring active: ${result.isSuccess}")
         }
 
-        return success
+        return result
     }
 
-    suspend fun startForTunnel(tunnelName: String, settings: TurnSettings, mode: String? = null): Boolean {
+    suspend fun startForTunnel(tunnelName: String, settings: TurnSettings, mode: String? = null): TurnStartResult {
         return startForTunnelInternal(tunnelName, settings, mode)
     }
     
@@ -169,13 +180,13 @@ class TurnProxyManager(private val context: Context) {
         tunnelName: String,
         settings: TurnSettings,
         modeOverride: String? = null
-    ): Boolean =
+    ): TurnStartResult =
         withContext(Dispatchers.IO) {
             operationMutex.lock()
             try {
                 if (!currentCoroutineContext().isActive) {
                     Log.d(TAG, "startForTunnelInternal cancelled before execution")
-                    return@withContext false
+                    return@withContext TurnStartResult(TurnBackend.WG_TURN_PROXY_ERROR_GENERIC)
                 }
 
                 val instance = instances.getOrPut(tunnelName) { Instance() }
@@ -189,7 +200,7 @@ class TurnProxyManager(private val context: Context) {
                 val jniReady = TurnBackend.waitForVpnServiceRegistered(2000)
                 if (!jniReady) {
                     Log.e(TAG, "TIMEOUT waiting for JNI registration!")
-                    return@withContext false
+                    return@withContext TurnStartResult(TurnBackend.WG_TURN_PROXY_ERROR_GENERIC)
                 }
 
                 // If network is still null, try one quick re-poll from monitor
@@ -228,12 +239,12 @@ class TurnProxyManager(private val context: Context) {
                     val msg = "TURN started for tunnel \"$tunnelName\" listening on $listenAddr (mode=$modeToUse)"
                     Log.d(TAG, msg)
                     appendLogLine(tunnelName, msg)
-                    true
+                    TurnStartResult(ret)
                 } else {
                     val msg = "Failed to start TURN proxy (error $ret)"
                     Log.e(TAG, msg)
                     appendLogLine(tunnelName, msg)
-                    false
+                    TurnStartResult(ret)
                 }
             } finally {
                 operationMutex.unlock()

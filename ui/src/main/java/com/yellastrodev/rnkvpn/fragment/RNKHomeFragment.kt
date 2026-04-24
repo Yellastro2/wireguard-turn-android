@@ -27,6 +27,7 @@ import com.yellastrodev.rknvpn.R
 import com.yellastrodev.rknvpn.activity.BaseActivity
 import com.yellastrodev.rknvpn.model.ObservableTunnel
 import com.yellastrodev.rknvpn.model.TunnelVkLinkException
+import com.yellastrodev.rnkvpn.rnkutils.CallJoinSource
 import com.yellastrodev.rnkvpn.rnkutils.CallResult
 import com.yellastrodev.rnkvpn.viewmodel.TunnelViewModel
 import com.yellastrodev.rnkvpn.viewmodel.ViewTunnelState
@@ -94,20 +95,7 @@ class RNKHomeFragment : BaseFragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.state.collect { currentState ->
-                    when (currentState) {
-                        is ViewTunnelState.Idle -> {
-                            setTunnelDisable()
-                        }
-                        is ViewTunnelState.Connecting -> {
-                            setTunnelConnecting()
-                        }
-                        is ViewTunnelState.Active -> {
-                            setTunnelEnable()
-                        }
-                        is ViewTunnelState.Error -> {
-
-                        }
-                    }
+                    renderViewState(currentState, selectedTunnel)
                 }
             }
         }
@@ -119,7 +107,7 @@ class RNKHomeFragment : BaseFragment() {
     override fun onResume() {
         super.onResume()
         selectedTunnel?.let { currentTunnel ->
-            updateUI(currentTunnel)
+            syncViewStateWithTunnel(currentTunnel)
         } ?: run {
             startPulseAnimation()
         }
@@ -245,10 +233,12 @@ class RNKHomeFragment : BaseFragment() {
                         Log.d("RNKHomeFragment", "[activateTunnel] Ссылка для запуска туннеля готова")
                     }
                     is CallResult.AuthExpired -> {
+                        viewModel.updateState(ViewTunnelState.Idle)
                         Snackbar.make(requireView(), "ОШИБКА СОГЛАСОВАНИЯ ОСОБЫХ ПОЛНОМОЧИЙ ПРОВЕРЬТЕ СВОЙ КЛЮЧ ГРАЖДАНИНА", Snackbar.LENGTH_LONG).show()
                         return@launch
                     }
                     is CallResult.Error -> {
+                        viewModel.updateState(ViewTunnelState.Idle)
                         Snackbar.make(requireView(), "НЕПРЕДВИДЕННАЯ ОШИБКА СОГЛАСОВАНИЯ ПОЛНОМОЧИЙ: ${launchResult.message}", Snackbar.LENGTH_LONG).show()
                         return@launch
                     }
@@ -262,7 +252,14 @@ class RNKHomeFragment : BaseFragment() {
         }
     }
 
-    private fun setTunnelState(tunnel: ObservableTunnel, state: Tunnel.State) {
+    /**
+     * setTunnelState applies the requested tunnel state and retries once with a fresh VK link for token sources.
+     */
+    private fun setTunnelState(
+        tunnel: ObservableTunnel,
+        state: Tunnel.State,
+        allowTokenRelinkRetry: Boolean = true,
+    ) {
         Log.d("RNKHomeFragment", "Установка состояния VPN: ${state.name}")
         lifecycleScope.launch {
             try {
@@ -271,7 +268,48 @@ class RNKHomeFragment : BaseFragment() {
                 tunnel.setStateAsync(state)
 
             } catch (e: TunnelVkLinkException) {
-                if (currentCallJoinSource?.type == com.yellastrodev.rnkvpn.rnkutils.CallJoinSource.Type.LINK)
+                val source = currentCallJoinSource
+                if (
+                    state == Tunnel.State.UP &&
+                    allowTokenRelinkRetry &&
+                    source?.type == CallJoinSource.Type.TOKEN &&
+                    e.reason == TunnelVkLinkException.Reason.VK_LINK_EXPIRED
+                ) {
+                    Log.w(
+                        "RNKHomeFragment",
+                        "[setTunnelState] VK звонок протух во время старта, генерируем новую ссылку и повторяем запуск один раз",
+                        e,
+                    )
+                    Snackbar.make(requireView(), "VK звонок уже завершён, обновляем ссылку и пробуем ещё раз", Snackbar.LENGTH_LONG).show()
+                    viewModel.updateState(ViewTunnelState.Connecting)
+
+                    when (val retryResult = (requireActivity() as BaseActivity).resolveVkLinkForLaunch(tunnel)) {
+                        is CallResult.Success -> {
+                            Log.d("RNKHomeFragment", "[setTunnelState] Получили новую VK ссылку, повторяем запуск туннеля")
+                            setTunnelState(tunnel, state, false)
+                            return@launch
+                        }
+                        is CallResult.AuthExpired -> {
+                            viewModel.updateState(ViewTunnelState.Idle)
+                            Snackbar.make(requireView(), "ОШИБКА СОГЛАСОВАНИЯ ОСОБЫХ ПОЛНОМОЧИЙ ПРОВЕРЬТЕ СВОЙ КЛЮЧ ГРАЖДАНИНА", Snackbar.LENGTH_LONG).show()
+                            return@launch
+                        }
+                        is CallResult.Error -> {
+                            viewModel.updateState(ViewTunnelState.Idle)
+                            Snackbar.make(requireView(), "НЕПРЕДВИДЕННАЯ ОШИБКА СОГЛАСОВАНИЯ ПОЛНОМОЧИЙ: ${retryResult.message}", Snackbar.LENGTH_LONG).show()
+                            return@launch
+                        }
+                        null -> {
+                            viewModel.updateState(ViewTunnelState.Idle)
+                            Snackbar.make(requireView(), "ОШИБКА ПОВТОРНОГО ЗАПУСКА: не удалось получить новую ссылку на звонок", Snackbar.LENGTH_LONG).show()
+                            return@launch
+                        }
+                    }
+                }
+                viewModel.updateState(ViewTunnelState.Idle)
+                if (e.reason == TunnelVkLinkException.Reason.VK_LINK_EXPIRED)
+                    Snackbar.make(requireView(), "VK звонок не найден или уже завершён", Snackbar.LENGTH_LONG).show()
+                if (e.reason != TunnelVkLinkException.Reason.VK_LINK_EXPIRED && source?.type == CallJoinSource.Type.LINK)
                     Snackbar.make(requireView(), "ОШИБКА ОТКЛЮЧЕНИЯ ОБНОВИТЕ КЛЮЧ ГРАЖДАНИНА", Snackbar.LENGTH_LONG).show()
                 else {
                     Log.w("RNKHomeFragment", "Ошибка открытия туннеля, обновим внутренние полномочия..", e)
@@ -302,6 +340,7 @@ class RNKHomeFragment : BaseFragment() {
 //                    }
                 }
             } catch (e: BackendException) {
+                viewModel.updateState(ViewTunnelState.Idle)
                 // Обработка ошибок (например, через Snackbar)
                 Log.e("RNKHomeFragment", "Ошибка при изменении состояния VPN", e)
                 if (e.reason ==  BackendException.Reason.VPN_NOT_AUTHORIZED) {
@@ -311,6 +350,7 @@ class RNKHomeFragment : BaseFragment() {
                 }
             }
             catch (e: Throwable) {
+                viewModel.updateState(ViewTunnelState.Idle)
                 // Обработка ошибок (например, через Snackbar)
                 Log.e("RNKHomeFragment", "Ошибка при изменении состояния VPN", e)
                 Snackbar.make(requireView(), "Ошибка: ${e.message}", Snackbar.LENGTH_LONG).show()
@@ -328,9 +368,17 @@ class RNKHomeFragment : BaseFragment() {
 
                 // Обновляем UI в главном потоке
                 lifecycleScope.launch {
-                    if (tunnel?.state == Tunnel.State.DOWN)
-                        viewModel.updateState(ViewTunnelState.Idle)
-//                    updateUI(tunnel)
+                    when (tunnel?.state) {
+                        Tunnel.State.UP -> viewModel.updateState(ViewTunnelState.Active)
+                        Tunnel.State.DOWN -> {
+                            if (viewModel.state.value is ViewTunnelState.Connecting) {
+                                Log.d("RNKHomeFragment", "[tunnelStateCallback] Игнорируем DOWN, пока идёт подключение")
+                            } else {
+                                viewModel.updateState(ViewTunnelState.Idle)
+                            }
+                        }
+                        else -> Unit
+                    }
                 }
             }
         }
@@ -344,7 +392,41 @@ class RNKHomeFragment : BaseFragment() {
         // Подписываемся на новый
         newTunnel?.addOnPropertyChangedCallback(tunnelStateCallback)
 
-        updateUI(newTunnel)
+        syncViewStateWithTunnel(newTunnel)
+    }
+
+    /**
+     * renderViewState draws the main screen from the intermediate UI state machine.
+     */
+    private fun renderViewState(viewState: ViewTunnelState, tunnel: ObservableTunnel?) {
+        Log.d("RNKHomeFragment", "[renderViewState] state=$viewState tunnel=${tunnel?.name} real=${tunnel?.state}")
+        when (viewState) {
+            is ViewTunnelState.Idle -> setTunnelDisable()
+            is ViewTunnelState.Connecting -> setTunnelConnecting()
+            is ViewTunnelState.Active -> setTunnelEnable()
+            is ViewTunnelState.Error -> setTunnelDisable()
+        }
+    }
+
+    /**
+     * syncViewStateWithTunnel refreshes the screen from the real tunnel state without breaking Connecting.
+     */
+    private fun syncViewStateWithTunnel(tunnel: ObservableTunnel?) {
+        if (viewModel.state.value is ViewTunnelState.Connecting) {
+            renderViewState(ViewTunnelState.Connecting, tunnel)
+            return
+        }
+
+        val nextState = if (tunnel?.state == Tunnel.State.UP) {
+            ViewTunnelState.Active
+        } else {
+            ViewTunnelState.Idle
+        }
+        if (viewModel.state.value != nextState) {
+            viewModel.updateState(nextState)
+        } else {
+            renderViewState(nextState, tunnel)
+        }
     }
 
 

@@ -18,6 +18,10 @@ import java.util.function.Function;
  * Native interface for TURN proxy management.
  */
 public final class TurnBackend {
+    public static final int WG_TURN_PROXY_SUCCESS = 0;
+    public static final int WG_TURN_PROXY_ERROR_GENERIC = -1;
+    public static final int WG_TURN_PROXY_ERROR_VK_LINK_EXPIRED = -9000;
+
     private static final AtomicReference<CompletableFuture<VpnService>> vpnServiceFutureRef = new AtomicReference<>(new CompletableFuture<>());
 
     // Latch for synchronization: signals that JNI is registered and ready to protect sockets
@@ -136,7 +140,7 @@ public final class TurnBackend {
      * @param streamsPerCred Number of streams sharing one TURN credential cache
      * @param watchdogTimeout DTLS watchdog timeout in seconds, 0 to disable
      * @param networkHandle Android network handle for socket binding
-     * @return 0 on success, -1 on failure
+     * @return 0 on success, -1 on generic failure, -9000 when VK reports that the call link expired
      */
     public static native int wgTurnProxyStart(
             String peerAddr,

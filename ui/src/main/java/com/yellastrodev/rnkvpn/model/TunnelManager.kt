@@ -43,7 +43,21 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.isActive
 
-class TunnelVkLinkException(message: String) : Exception(message)
+/**
+ * TunnelVkLinkException reports TURN startup failures that are specific to VK link handling.
+ */
+class TunnelVkLinkException(
+    message: String,
+    val reason: Reason = Reason.GENERIC,
+) : Exception(message) {
+    /**
+     * Reason describes the specific VK-related startup failure.
+     */
+    enum class Reason {
+        GENERIC,
+        VK_LINK_EXPIRED,
+    }
+}
 
 
 /**
@@ -76,6 +90,13 @@ class TunnelManager(
     }
 
     var activityViewModel: TunnelViewModel? = null
+
+    /**
+     * updateViewState keeps the home screen status synchronized with tunnel startup progress.
+     */
+    private fun updateViewState(newState: ViewTunnelState) {
+        activityViewModel?.updateState(newState)
+    }
 
 
     suspend fun getTunnels(): ObservableSortedKeyedArrayList<String, ObservableTunnel> = tunnels.await()
@@ -317,6 +338,7 @@ class TunnelManager(
 
             var configToUse = tunnel.getConfigAsync()
             if (state == Tunnel.State.UP) {
+                updateViewState(ViewTunnelState.Connecting)
                 Log.d(TAG, "[setTunnelState] Поднятие тунеля")
                 val turn = tunnel.turnSettings
                 if (turn != null && turn.enabled) {
@@ -336,11 +358,17 @@ class TunnelManager(
                     }
 
                     Log.d(TAG, "[setTunnelState] Starting TURN proxy before WireGuard...")
-                    val turnStarted = withContext(Dispatchers.IO) {
+                    val turnStartResult = withContext(Dispatchers.IO) {
                         getTurnProxyManager().onTunnelEstablished(tunnel.name, turn)
                     }
-                    if (!turnStarted) {
+                    if (!turnStartResult.isSuccess) {
                         withContext(Dispatchers.IO) { goBackend.stopVpnServiceIfIdle() }
+                        if (turnStartResult.isVkLinkExpired) {
+                            throw TunnelVkLinkException(
+                                "TURN proxy startup failed: VK link expired",
+                                TunnelVkLinkException.Reason.VK_LINK_EXPIRED,
+                            )
+                        }
                         throw TunnelVkLinkException("TURN proxy startup failed")
                     }
                     turnStartedBeforeWireGuard = true
@@ -382,9 +410,7 @@ class TunnelManager(
                 }
             }
             Log.w(TAG, "[setTunnelState] Тунель ${tunnel.name} изменен стейт на ${newState.name}!")
-            activityViewModel?. let {
-                it.updateState(ViewTunnelState.Active)
-            }
+            updateViewState(if (newState == Tunnel.State.UP) ViewTunnelState.Active else ViewTunnelState.Idle)
 
             if (newState == Tunnel.State.UP) {
                 lastUsedTunnel = tunnel
@@ -396,6 +422,7 @@ class TunnelManager(
                     getTurnProxyManager().stopForTunnel(tunnel.name)
                 }
                 preparedGoBackend?.stopVpnServiceIfIdle()
+                updateViewState(ViewTunnelState.Idle)
             }
             // При отмене не вызываем onStateChanged(newState), чтобы UI не "прыгал"
             throw e
@@ -414,6 +441,7 @@ class TunnelManager(
                 }
                 withContext(Dispatchers.IO) {
                     preparedGoBackend?.stopVpnServiceIfIdle()
+                    updateViewState(ViewTunnelState.Idle)
                 }
             }
             throwable = e

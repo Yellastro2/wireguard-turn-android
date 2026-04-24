@@ -87,6 +87,7 @@ type stream struct {
 }
 
 const iPacketBuffMaxSize = 2048
+const proxyStartErrorVkExpired int32 = -9000
 
 var packetPool = sync.Pool{
 	New: func() interface{} {
@@ -104,7 +105,7 @@ var (
 	noDtlsRxErrorCount atomic.Uint64 // Errors in NoDTLS RX
 )
 
-func (s *stream) run(link string, peer *net.UDPAddr, udp bool, okchan chan<- struct{}, turnIp string, turnPort int, peerType string) {
+func (s *stream) run(link string, peer *net.UDPAddr, udp bool, okchan chan<- struct{}, fatalchan chan<- error, turnIp string, turnPort int, peerType string) {
 	const maxRetries = 150
 	retryCount := 0
 
@@ -219,6 +220,10 @@ func (s *stream) run(link string, peer *net.UDPAddr, udp bool, okchan chan<- str
 
 			if strings.Contains(err.Error(), "FATAL_VK_EXPIRED") {
 				turnLog("[STREAM %d] ABORT: VK link expired (error 9000 / Call not found). Stopping retries.", s.id)
+				select {
+				case fatalchan <- err:
+				default:
+				}
 				return
 			}
 
@@ -615,10 +620,11 @@ func wgTurnProxyStart(peerAddrC *C.char, vklinkC *C.char, modeC *C.char, n C.int
 	}
 
 	ok := make(chan struct{}, int(n))
+	fatal := make(chan error, 1)
 	streams := make([]*stream, int(n))
 	for i := 0; i < int(n); i++ {
 		streams[i] = &stream{ctx: ctx, id: i, in: make(chan []byte, 512), out: lc, sessionID: sessionID, cert: &cert, watchdogTimeout: watchdogTimeout}
-		go streams[i].run(link, peer, udp != 0, ok, turnIp, turnPort, peerType)
+		go streams[i].run(link, peer, udp != 0, ok, fatal, turnIp, turnPort, peerType)
 		time.Sleep(200 * time.Millisecond)
 	}
 
@@ -667,6 +673,10 @@ func wgTurnProxyStart(peerAddrC *C.char, vklinkC *C.char, modeC *C.char, n C.int
 	case <-ok:
 		turnLog("[PROXY] First stream is ready, tunnel can start")
 		return 0
+	case err := <-fatal:
+		turnLog("[PROXY] ABORT startup due to fatal VK error: %v", err)
+		cancel()
+		return proxyStartErrorVkExpired
 	case <-time.After(30 * time.Second):
 		turnLog("[PROXY] TIMEOUT waiting for any stream to be ready")
 		cancel()
