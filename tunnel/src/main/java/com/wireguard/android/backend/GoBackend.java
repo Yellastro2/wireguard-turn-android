@@ -248,6 +248,39 @@ public final class GoBackend implements Backend {
         return getState(tunnel);
     }
 
+    public VpnService ensureVpnServiceReady() throws Exception {
+        if (VpnService.prepare(context) != null)
+            throw new BackendException(Reason.VPN_NOT_AUTHORIZED);
+
+        final VpnService service;
+        if (!vpnService.isDone()) {
+            Log.d(TAG, "Requesting to start VpnService");
+            context.startService(new Intent(context, VpnService.class));
+        }
+
+        try {
+            service = vpnService.get(2, TimeUnit.SECONDS);
+        } catch (final TimeoutException e) {
+            final Exception be = new BackendException(Reason.UNABLE_TO_START_VPN);
+            be.initCause(e);
+            throw be;
+        }
+
+        service.setOwner(this);
+        return service;
+    }
+
+    public void stopVpnServiceIfIdle() {
+        if (currentTunnelHandle != -1)
+            return;
+        try {
+            final VpnService service = vpnService.get(0, TimeUnit.NANOSECONDS);
+            Log.d(TAG, "Stopping idle VpnService");
+            service.stopSelf();
+        } catch (final Exception ignored) {
+        }
+    }
+
     private void setStateInternal(final Tunnel tunnel, @Nullable final Config config, final State state)
             throws Exception {
         Log.i(TAG, "Bringing tunnel " + tunnel.getName() + ' ' + state);
@@ -255,24 +288,7 @@ public final class GoBackend implements Backend {
         if (state == State.UP) {
             if (config == null)
                 throw new BackendException(Reason.TUNNEL_MISSING_CONFIG);
-
-            if (VpnService.prepare(context) != null)
-                throw new BackendException(Reason.VPN_NOT_AUTHORIZED);
-
-            final VpnService service;
-            if (!vpnService.isDone()) {
-                Log.d(TAG, "Requesting to start VpnService");
-                context.startService(new Intent(context, VpnService.class));
-            }
-
-            try {
-                service = vpnService.get(2, TimeUnit.SECONDS);
-            } catch (final TimeoutException e) {
-                final Exception be = new BackendException(Reason.UNABLE_TO_START_VPN);
-                be.initCause(e);
-                throw be;
-            }
-            service.setOwner(this);
+            final VpnService service = ensureVpnServiceReady();
 
             if (currentTunnelHandle != -1) {
                 Log.w(TAG, "Tunnel already up");

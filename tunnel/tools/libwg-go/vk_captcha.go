@@ -31,6 +31,15 @@ import (
 	tlsclient "github.com/kiper292/tls-client"
 )
 
+// keysOfMap returns a compact list of map keys for debug logging.
+func keysOfMap(data map[string]interface{}) []string {
+	keys := make([]string, 0, len(data))
+	for key := range data {
+		keys = append(keys, key)
+	}
+	return keys
+}
+
 type VkCaptchaError struct {
 	ErrorCode               int
 	ErrorMsg                string
@@ -55,7 +64,7 @@ func ParseVkCaptchaError(errData map[string]interface{}) *VkCaptchaError {
 	// Extract redirect_uri
 	RedirectURI, ok := errData["redirect_uri"].(string)
 	if !ok {
-		turnLog("missing redirect_uri in captcha error data")
+		turnLog("[ParseVkCaptchaError] В данных капчи нет redirect_uri, keys=%v, error=%v", keysOfMap(errData), errData)
 		return nil
 	}
 

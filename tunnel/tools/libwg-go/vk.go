@@ -26,9 +26,9 @@ import (
 	"unsafe"
 
 	fhttp "github.com/bogdanfinn/fhttp"
+	"github.com/google/uuid"
 	tlsclient "github.com/kiper292/tls-client"
 	"github.com/kiper292/tls-client/profiles"
-	"github.com/google/uuid"
 )
 
 // VKCredentials stores VK API client credentials
@@ -124,7 +124,7 @@ func fetchVkCreds(ctx context.Context, link string) (string, string, string, err
 		tlsclient.WithDialer(getCustomNetDialer()),
 		tlsclient.WithDialContext(getCustomDialContext),
 	)
-	
+
 	if err != nil {
 		return "", "", "", fmt.Errorf("failed to create tlsclient: %w", err)
 	}
@@ -251,15 +251,19 @@ func getTokenChain(ctx context.Context, link string, creds VKCredentials, client
 	manualCaptcha := true
 	autoCaptchaSliderPOC := true
 	streamID := 0
-	
+	token2StartedAt := time.Now()
+
 	var token2 string
 	for attempt := 0; ; attempt++ {
+		turnLog("[getTokenChain] Запрашиваем token2, попытка %d, прошло с начала этапа %v", attempt+1, time.Since(token2StartedAt))
 		resp, err = doRequest(data, urlAddr)
 		if err != nil {
+			turnLog("[getTokenChain] Запрос token2 завершился ошибкой на попытке %d через %v: %v", attempt+1, time.Since(token2StartedAt), err)
 			return "", "", "", err
 		}
 
 		if errObj, hasErr := resp["error"].(map[string]interface{}); hasErr {
+			turnLog("[getTokenChain] VK вернул error на попытке token2=%d через %v: %v", attempt+1, time.Since(token2StartedAt), errObj)
 			captchaErr := ParseVkCaptchaError(errObj)
 			if captchaErr != nil && captchaErr.IsCaptchaError() {
 				solveMode, hasSolveMode := captchaSolveModeForAttempt(attempt, manualCaptcha, autoCaptchaSliderPOC)
@@ -304,25 +308,25 @@ func getTokenChain(ctx context.Context, link string, creds VKCredentials, client
 					}
 				case captchaSolveModeManual:
 					turnLog("[STREAM %d] [Captcha] Triggering manual captcha fallback...", streamID)
-				
+
 					// Step 2: Fall back to WebView
 					turnLog("[Captcha] Attempt 3. Web view solving...")
 					turnLog("[Captcha] Opening WebView for manual solving...")
 					redirectURICStr := C.CString(captchaErr.RedirectURI)
 					defer C.free(unsafe.Pointer(redirectURICStr))
-				
+
 					cToken := C.requestCaptcha(redirectURICStr)
 					if cToken == nil {
 						solveErr = fmt.Errorf("WebView captcha solving failed: returned nil token")
 					}
 					defer C.free(unsafe.Pointer(cToken))
-				
+
 					successToken = C.GoString(cToken)
 					if successToken == "" {
 						solveErr = fmt.Errorf("WebView captcha solving failed: returned empty token")
 					} else {
-						solveErr = nil;
-						turnLog("[Captcha] WebView solution SUCCESS! Got success_token")
+						solveErr = nil
+						turnLog("[getTokenChain] Ручная капча решена на попытке %d через %v, success_token получен", attempt+1, time.Since(token2StartedAt))
 					}
 				}
 
@@ -356,6 +360,7 @@ func getTokenChain(ctx context.Context, link string, creds VKCredentials, client
 					data = fmt.Sprintf("vk_join_link=https://vk.com/call/join/%s&name=%s&captcha_key=%s&captcha_sid=%s&access_token=%s",
 						link, escapedName, neturl.QueryEscape(captchaKey), captchaErr.CaptchaSid, token1)
 				} else {
+					turnLog("[getTokenChain] Повторяем запрос token2 после success_token, captcha_sid=%s, captcha_attempt=%s, прошло %v", captchaErr.CaptchaSid, captchaErr.CaptchaAttempt, time.Since(token2StartedAt))
 					data = fmt.Sprintf("vk_join_link=https://vk.com/call/join/%s&name=%s&captcha_key=&captcha_sid=%s&is_sound_captcha=0&success_token=%s&captcha_ts=%s&captcha_attempt=%s&access_token=%s",
 						link, escapedName, captchaErr.CaptchaSid, neturl.QueryEscape(successToken), captchaErr.CaptchaTs, captchaErr.CaptchaAttempt, token1)
 				}
@@ -363,12 +368,12 @@ func getTokenChain(ctx context.Context, link string, creds VKCredentials, client
 			}
 			return "", "", "", fmt.Errorf("VK API error: %v", errObj)
 		}
-		
+
 		responseRaw, okLoop := resp["response"]
 		if !okLoop {
 			return "", "", "", fmt.Errorf("invalid response structure for token2: 'response' not found, response: %v", resp)
 		}
-		
+
 		respMap, okLoop := responseRaw.(map[string]interface{})
 		if !okLoop {
 			return "", "", "", fmt.Errorf("unexpected getAnonymousToken response: %v", resp)
@@ -378,17 +383,18 @@ func getTokenChain(ctx context.Context, link string, creds VKCredentials, client
 		if !okToken2 {
 			return "", "", "", fmt.Errorf("token2 not found in response: %v", resp)
 		}
-		
+
 		token2, okLoop = token2Raw.(string)
 		if !okLoop {
 			return "", "", "", fmt.Errorf("token2 is not a string: %v", token2Raw)
 		}
-		
+		turnLog("[getTokenChain] Token2 успешно получен на попытке %d через %v", attempt+1, time.Since(token2StartedAt))
+
 		break
 	} // end of for
 
 	turnLog("[VK Auth] Token 2 (messages token) received")
-	
+
 	vkDelayRandom(100, 200)
 
 	// Token 3

@@ -98,7 +98,7 @@ func handleAuthError(streamID int) bool {
 	now := time.Now().Unix()
 
 	// Reset counter if enough time has passed
-	if now - cache.lastErrorTime.Load() > int64(errorWindow.Seconds()) {
+	if now-cache.lastErrorTime.Load() > int64(errorWindow.Seconds()) {
 		cache.errorCount.Store(0)
 	}
 
@@ -158,6 +158,7 @@ func serializeFetch(ctx context.Context, link string, storeFn fetchFunc) (string
 func getCredsCached(ctx context.Context, link string, streamID int, storeFn fetchFunc) (string, string, string, error) {
 	cache := getStreamCache(streamID)
 	cacheID := getCacheID(streamID)
+	fetchStartedAt := time.Now()
 
 	cache.mutex.Lock()
 	defer cache.mutex.Unlock()
@@ -165,11 +166,11 @@ func getCredsCached(ctx context.Context, link string, streamID int, storeFn fetc
 	// Check cache — another stream may have populated it while waiting
 	if cache.creds.Link == link && time.Now().Before(cache.creds.ExpiresAt) {
 		expires := time.Until(cache.creds.ExpiresAt)
-		turnLog("[Auth] Using cached credentials (cache=%d, expires in %v)", cacheID, expires)
+		turnLog("[getCredsCached] Поток %d использует кешированные credentials (cache=%d, живут ещё %v)", streamID, cacheID, expires)
 		return cache.creds.Username, cache.creds.Password, cache.creds.ServerAddr, nil
 	}
 
-	turnLog("[Auth] Cache miss (cache=%d), starting credential fetch...", cacheID)
+	turnLog("[getCredsCached] Поток %d получил cache miss (cache=%d), начинаем запрос credentials", streamID, cacheID)
 
 	// Check context before long fetch
 	select {
@@ -182,6 +183,7 @@ func getCredsCached(ctx context.Context, link string, streamID int, storeFn fetc
 	user, pass, addr, err := serializeFetch(ctx, link, storeFn)
 
 	if err != nil {
+		turnLog("[getCredsCached] Поток %d не получил credentials (cache=%d) за %v: %v", streamID, cacheID, time.Since(fetchStartedAt), err)
 		return "", "", "", err
 	}
 
@@ -194,7 +196,7 @@ func getCredsCached(ctx context.Context, link string, streamID int, storeFn fetc
 		Link:       link,
 	}
 
-	turnLog("[Auth] Success! Credentials cached until %v (cache=%d)", cache.creds.ExpiresAt, cacheID)
+	turnLog("[getCredsCached] Поток %d успешно получил credentials за %v и сохранил их в cache=%d до %v", streamID, time.Since(fetchStartedAt), cacheID, cache.creds.ExpiresAt)
 	return user, pass, addr, nil
 }
 

@@ -17,6 +17,7 @@ import com.yellastrodev.rknvpn.Application.Companion.getTunnelManager
 import com.yellastrodev.rknvpn.Application.Companion.getTurnProxyManager
 import com.yellastrodev.rknvpn.BR
 import com.yellastrodev.rknvpn.R
+import com.wireguard.android.backend.GoBackend
 import com.wireguard.android.backend.Statistics
 import com.wireguard.android.backend.Tunnel
 import com.yellastrodev.rknvpn.configStore.ConfigStore
@@ -33,6 +34,7 @@ import com.yellastrodev.rnkvpn.viewmodel.ViewTunnelState
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -308,6 +310,8 @@ class TunnelManager(
 
         var newState = tunnel.state
         var throwable: Throwable? = null
+        var turnStartedBeforeWireGuard = false
+        var preparedGoBackend: GoBackend? = null
         try {
             if (!coroutineContext.isActive) return@withContext tunnel.state
 
@@ -316,6 +320,30 @@ class TunnelManager(
                 Log.d(TAG, "[setTunnelState] Поднятие тунеля")
                 val turn = tunnel.turnSettings
                 if (turn != null && turn.enabled) {
+                    val goBackend = getBackend() as? GoBackend
+                        ?: throw IllegalStateException("TURN startup requires GoBackend")
+                    preparedGoBackend = goBackend
+
+                    Log.d(TAG, "[setTunnelState] Preparing VpnService before TURN startup...")
+                    withContext(Dispatchers.IO) {
+                        goBackend.ensureVpnServiceReady()
+                    }
+
+                    if (!coroutineContext.isActive) {
+                        Log.d(TAG, "[setTunnelState] Cancelled after VpnService preparation, cleaning up")
+                        withContext(NonCancellable + Dispatchers.IO) { goBackend.stopVpnServiceIfIdle() }
+                        return@withContext Tunnel.State.DOWN
+                    }
+
+                    Log.d(TAG, "[setTunnelState] Starting TURN proxy before WireGuard...")
+                    val turnStarted = withContext(Dispatchers.IO) {
+                        getTurnProxyManager().onTunnelEstablished(tunnel.name, turn)
+                    }
+                    if (!turnStarted) {
+                        withContext(Dispatchers.IO) { goBackend.stopVpnServiceIfIdle() }
+                        throw TunnelVkLinkException("TURN proxy startup failed")
+                    }
+                    turnStartedBeforeWireGuard = true
                     configToUse = TurnConfigProcessor.modifyConfigForActiveTurn(configToUse, turn)
                 }
             } else if (state == Tunnel.State.DOWN) {
@@ -340,29 +368,15 @@ class TunnelManager(
             if (!coroutineContext.isActive) {
                 Log.d(TAG, "[setTunnelState] Задача отменена после поднятия WG. Гасим всё.")
                 if (newState == Tunnel.State.UP) {
-                    withContext(Dispatchers.IO) { getBackend().setState(tunnel, Tunnel.State.DOWN, null) }
+                    withContext(NonCancellable + Dispatchers.IO) { getBackend().setState(tunnel, Tunnel.State.DOWN, null) }
                 }
                 return@withContext Tunnel.State.DOWN
             }
 
-            // NEW: Start TURN AFTER tunnel is established
-            // This ensures VpnService.protect() will work for TURN sockets
             if (newState == Tunnel.State.UP && state == Tunnel.State.UP) {
-                // Use tunnel.turnSettings (already loaded from turnSettingsStore)
                 val turn = tunnel.turnSettings
                 if (turn != null && turn.enabled) {
-                    Log.d(TAG, "[setTunnelState] Tunnel established, starting TURN proxy...")
-                    val turnStarted = withContext(Dispatchers.IO) {
-                        getTurnProxyManager().onTunnelEstablished(tunnel.name, turn)
-                    }
-                    if (!turnStarted) {
-                        Log.w(TAG, "[setTunnelState] TURN proxy start returned false, but tunnel is up. Shutting down...")
-                        // ЖЕСТКО ВЫРУБАЕМ WIREGUARD ОБРАТНО, ТАК КАК ПРОКСИ СДОХ
-                        withContext(Dispatchers.IO) { getBackend().setState(tunnel, Tunnel.State.DOWN, null) }
-                        newState = Tunnel.State.DOWN
-                        // Выкидываем ошибку, чтобы интерфейс понял, что соединение не удалось
-                        throw TunnelVkLinkException("Ошибка TURN-прокси (возможно, ссылка VK протухла)")
-                    }
+                    Log.d(TAG, "[setTunnelState] TURN was already started before WireGuard: $turnStartedBeforeWireGuard")
                 } else {
                     Log.w(TAG, "[setTunnelState] TURN not enabled for tunnel ${tunnel.name}, skipping")
                 }
@@ -377,9 +391,31 @@ class TunnelManager(
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
             Log.d(TAG, "[setTunnelState] Job for ${tunnel.name} was cancelled while going to $state")
+            withContext(NonCancellable + Dispatchers.IO) {
+                if (turnStartedBeforeWireGuard) {
+                    getTurnProxyManager().stopForTunnel(tunnel.name)
+                }
+                preparedGoBackend?.stopVpnServiceIfIdle()
+            }
             // При отмене не вызываем onStateChanged(newState), чтобы UI не "прыгал"
             throw e
         } catch (e: Throwable) {
+            if (state == Tunnel.State.UP) {
+                withContext(Dispatchers.IO) {
+                    try {
+                        getBackend().setState(tunnel, Tunnel.State.DOWN, null)
+                    } catch (_: Throwable) {
+                    }
+                }
+                if (turnStartedBeforeWireGuard) {
+                    withContext(Dispatchers.IO) {
+                        getTurnProxyManager().stopForTunnel(tunnel.name)
+                    }
+                }
+                withContext(Dispatchers.IO) {
+                    preparedGoBackend?.stopVpnServiceIfIdle()
+                }
+            }
             throwable = e
         }
         // 3. Обновляем состояние в UI только если корутина не была отменена.
