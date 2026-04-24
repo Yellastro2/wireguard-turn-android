@@ -20,7 +20,9 @@ import androidx.datastore.preferences.preferencesDataStoreFile
 import com.google.android.material.color.DynamicColors
 import com.wireguard.android.backend.Backend
 import com.wireguard.android.backend.GoBackend
+import com.wireguard.android.backend.TurnBackend
 import com.wireguard.android.backend.WgQuickBackend
+import com.yellastrodev.rknvpn.activity.CaptchaActivity
 import com.yellastrodev.rknvpn.configStore.FileConfigStore
 import com.yellastrodev.rknvpn.model.TunnelManager
 import com.yellastrodev.rknvpn.turn.TurnSettingsStore
@@ -118,6 +120,10 @@ class Application : android.app.Application() {
         // Load wg-go library BEFORE creating TurnProxyManager to avoid UnsatisfiedLinkError
         com.wireguard.android.util.SharedLibraryLoader.loadSharedLibrary(applicationContext, "wg-go")
         turnProxyManager = TurnProxyManager(applicationContext)
+        TurnBackend.setCaptchaHandler { redirectUri ->
+            Log.d(TAG, "Captcha handler invoked, showing CaptchaActivity")
+            CaptchaActivity.solveCaptcha(applicationContext, redirectUri)
+        }
         tunnelManager.onCreate()
         coroutineScope.launch(Dispatchers.IO) {
             try {

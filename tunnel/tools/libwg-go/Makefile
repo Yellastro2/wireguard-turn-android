@@ -19,6 +19,8 @@ export CGO_LDFLAGS := $(CLANG_FLAGS) $(patsubst -Wl$(comma)--build-id=%,-Wl$(com
 export GOARCH := $(NDK_GO_ARCH_MAP_$(ANDROID_ARCH_NAME))
 export GOOS := android
 export CGO_ENABLED := 1
+export GOPROXY ?= https://goproxy.cn,https://goproxy.io,https://proxy.golang.org
+export GOSUMDB ?= off
 
 default: $(DESTDIR)/libwg-go.so
 

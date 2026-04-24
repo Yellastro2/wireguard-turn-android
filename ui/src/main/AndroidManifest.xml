@@ -89,6 +89,12 @@
             android:parentActivityName=".activity.MainActivity" />
 
         <activity
+            android:name=".activity.CaptchaActivity"
+            android:exported="false"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+
+        <activity
             android:name=".activity.TunnelCreatorActivity"
             android:label="@string/create_activity_title"
             android:parentActivityName=".activity.MainActivity" />

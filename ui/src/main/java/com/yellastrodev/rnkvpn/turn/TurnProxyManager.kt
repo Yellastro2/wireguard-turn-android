@@ -204,6 +204,7 @@ class TurnProxyManager(private val context: Context) {
 
                 val networkHandle = lastKnownNetwork?.getNetworkHandle() ?: 0L
                 val modeToUse = modeOverride ?: settings.mode
+                val peerType = if (settings.noDtls) "wireguard" else "proxy_v2"
                 Log.d(TAG, "Starting TURN proxy for $tunnelName with network: $lastKnownNetwork (handle=$networkHandle), mode=$modeToUse")
                 
                 val ret = TurnBackend.wgTurnProxyStart(
@@ -215,7 +216,9 @@ class TurnProxyManager(private val context: Context) {
                     "127.0.0.1:${settings.localPort}",
                     settings.turnIp,
                     settings.turnPort,
-                    if (settings.noDtls) 1 else 0,
+                    peerType,
+                    DEFAULT_STREAMS_PER_CRED,
+                    DEFAULT_WATCHDOG_TIMEOUT_SECONDS,
                     networkHandle
                 )
 
@@ -294,5 +297,7 @@ class TurnProxyManager(private val context: Context) {
     companion object {
         private const val TAG = "WireGuard/TurnProxyManager"
         private const val MAX_LOG_CHARS = 128 * 1024
+        private const val DEFAULT_STREAMS_PER_CRED = 4
+        private const val DEFAULT_WATCHDOG_TIMEOUT_SECONDS = 30
     }
 }

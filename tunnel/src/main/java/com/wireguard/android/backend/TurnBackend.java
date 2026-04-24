@@ -12,6 +12,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 
 /**
  * Native interface for TURN proxy management.
@@ -21,6 +22,9 @@ public final class TurnBackend {
 
     // Latch for synchronization: signals that JNI is registered and ready to protect sockets
     private static final AtomicReference<CountDownLatch> vpnServiceLatchRef = new AtomicReference<>(new CountDownLatch(1));
+
+    // Captcha handler: called when automatic captcha solving fails and WebView is needed
+    private static volatile Function<String, String> captchaHandler;
 
     private TurnBackend() {
     }
@@ -92,6 +96,29 @@ public final class TurnBackend {
         }
     }
 
+    public static void setCaptchaHandler(@Nullable Function<String, String> handler) {
+        captchaHandler = handler;
+        Log.d(TAG, "Captcha handler " + (handler != null ? "registered" : "cleared"));
+    }
+
+    @SuppressWarnings("unused") // Called from native code
+    public static String onCaptchaRequired(String redirectUri) {
+        Log.d(TAG, "onCaptchaRequired called with URI length=" + (redirectUri != null ? redirectUri.length() : 0));
+        Function<String, String> handler = captchaHandler;
+        if (handler == null) {
+            Log.e(TAG, "No captcha handler registered!");
+            return "";
+        }
+        try {
+            String result = handler.apply(redirectUri);
+            Log.d(TAG, "Captcha handler returned: " + (result != null && !result.isEmpty() ? "token" : "empty"));
+            return result != null ? result : "";
+        } catch (Exception e) {
+            Log.e(TAG, "Captcha handler threw exception", e);
+            return "";
+        }
+    }
+
     public static native void wgSetVpnService(@Nullable VpnService service);
 
     /**
@@ -105,7 +132,9 @@ public final class TurnBackend {
      * @param listenAddr  Local UDP listen address (e.g. "127.0.0.1:51820")
      * @param turnIp      Override TURN server IP (empty string = use from credentials)
      * @param turnPort    Override TURN server port (0 = use from credentials)
-     * @param noDtls      1 = no DTLS obfuscation (direct relay), 0 = DTLS
+     * @param peerType    "proxy_v2", "proxy_v1", or "wireguard"
+     * @param streamsPerCred Number of streams sharing one TURN credential cache
+     * @param watchdogTimeout DTLS watchdog timeout in seconds, 0 to disable
      * @param networkHandle Android network handle for socket binding
      * @return 0 on success, -1 on failure
      */
@@ -118,11 +147,14 @@ public final class TurnBackend {
             String listenAddr,
             String turnIp,
             int turnPort,
-            int noDtls,
+            String peerType,
+            int streamsPerCred,
+            int watchdogTimeout,
             long networkHandle
     );
     public static native void wgTurnProxyStop();
     public static native void wgNotifyNetworkChange();
+    public static native String wgGetNetworkDnsServers(long networkHandle);
     
     private static final String TAG = "WireGuard/TurnBackend";
 }
