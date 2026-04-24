@@ -17,3 +17,4 @@ build/
 gradlew.bat
 maint/
 ui/release
+.kotlin
